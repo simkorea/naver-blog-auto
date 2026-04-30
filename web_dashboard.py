@@ -5,6 +5,9 @@ import re
 import subprocess
 import datetime
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 # ── 경로 설정 ──
@@ -160,7 +163,7 @@ with st.sidebar:
 # 메인 — 탭
 # ══════════════════════════════════════════
 st.title("🏠 네이버 부동산 블로그 자동화")
-tab_editor, tab_posts, tab_status = st.tabs(["📝 원고 에디터", "📂 포스트 관리", "📊 시스템 상태"])
+tab_editor, tab_image, tab_posts, tab_status = st.tabs(["📝 원고 에디터", "🎨 이미지 생성", "📂 포스트 관리", "📊 시스템 상태"])
 
 # ─────────────────────────────────────────
 # Tab 1: 원고 에디터
@@ -288,7 +291,246 @@ with tab_editor:
             st.caption(f"업로드 폴더: `{post_dir}`")
 
 # ─────────────────────────────────────────
-# Tab 2: 포스트 관리
+# Tab 2: 이미지 생성
+# ─────────────────────────────────────────
+with tab_image:
+    from dotenv import load_dotenv as _ld; _ld()
+    leo_key = os.getenv("LEONARDO_API_KEY", "")
+
+    if not leo_key:
+        st.error("❌ .env 파일에 LEONARDO_API_KEY가 없습니다.")
+    else:
+        gen_mode = st.radio(
+            "생성 방식",
+            ["📄 원고 프롬프트 기반 생성", "🖼️ 업로드 이미지 기반 생성"],
+            horizontal=True,
+        )
+        st.divider()
+
+        # ── 모드 1: 원고 프롬프트 기반 ──
+        if gen_mode == "📄 원고 프롬프트 기반 생성":
+            st.markdown("생성된 포스트의 프롬프트를 선택·편집하여 이미지를 (재)생성합니다.")
+
+            posts = get_all_posts()
+            if not posts:
+                st.info("먼저 '원고 에디터' 탭에서 포스트를 생성해주세요.")
+            else:
+                labels  = [f"[{p['date']}]  {p['title']}" for p in posts]
+                sel_idx = st.selectbox("포스트 선택", range(len(posts)),
+                                       format_func=lambda i: labels[i], key="img_post_sel")
+                post_dir     = posts[sel_idx]["dir"]
+                prompts_file = post_dir / "prompts.txt"
+
+                if not prompts_file.exists():
+                    st.warning("이 포스트에 prompts.txt 파일이 없습니다.")
+                else:
+                    raw_prompts  = prompts_file.read_text(encoding="utf-8")
+                    prompt_lines = [l.strip() for l in raw_prompts.splitlines() if l.strip()]
+
+                    st.write(f"**총 {len(prompt_lines)}개 프롬프트** — 생성할 항목 선택 후 버튼 클릭")
+
+                    selected = []
+                    for idx, line in enumerate(prompt_lines):
+                        num_match = re.match(r"^(\d+)[\.\)]\s*", line)
+                        slot_num  = int(num_match.group(1)) if num_match else (idx + 1)
+                        clean     = re.sub(r"^\d+[\.\)]\s*", "", line).strip()
+
+                        existing = post_dir / f"{slot_num}.jpg"
+                        badge    = "✅" if existing.exists() else "🔲"
+
+                        col_chk, col_badge, col_txt = st.columns([1, 1, 14])
+                        with col_chk:
+                            checked = st.checkbox("", value=not existing.exists(),
+                                                  key=f"chk_{sel_idx}_{idx}")
+                        with col_badge:
+                            st.write(badge)
+                        with col_txt:
+                            edited = st.text_input(
+                                f"slot_{slot_num}",
+                                value=clean,
+                                key=f"prompt_{sel_idx}_{idx}",
+                                label_visibility="collapsed",
+                            )
+                        if checked:
+                            selected.append((slot_num, edited))
+
+                    overwrite = st.checkbox("✅ 기존 이미지 덮어쓰기", value=False)
+
+                    col_btn, col_info = st.columns([1, 2])
+                    with col_btn:
+                        gen_btn = st.button(
+                            f"🚀  {len(selected)}개 이미지 생성",
+                            type="primary",
+                            disabled=(len(selected) == 0),
+                            use_container_width=True,
+                        )
+                    with col_info:
+                        st.info(f"이미지 1장당 약 30~60초 소요 · 총 {len(selected)}장")
+
+                    if gen_btn and selected:
+                        from leonardo_generator import (
+                            generate_text_to_image, poll_until_complete, download_image
+                        )
+
+                        progress_bar = st.progress(0)
+                        status_txt   = st.empty()
+                        gallery      = st.empty()
+                        done_paths   = []
+
+                        for count, (slot, prompt) in enumerate(selected):
+                            save_path = post_dir / f"{slot}.jpg"
+
+                            if save_path.exists() and not overwrite:
+                                status_txt.info(f"[{count+1}/{len(selected)}] {slot}.jpg 이미 존재 — 건너뜀")
+                                done_paths.append(save_path)
+                                progress_bar.progress((count + 1) / len(selected))
+                                continue
+
+                            status_txt.write(f"⏳ [{count+1}/{len(selected)}] 슬롯 {slot} 생성 요청 중...")
+
+                            try:
+                                gen_id = generate_text_to_image(prompt, leo_key)
+
+                                tick_txt = st.empty()
+                                def on_tick(elapsed, _t=tick_txt, _c=count, _n=len(selected), _s=slot):
+                                    _t.caption(f"  대기 중... {elapsed}초 경과 (슬롯 {_s})")
+
+                                urls = poll_until_complete(gen_id, leo_key, on_tick=on_tick)
+                                tick_txt.empty()
+
+                                if urls and download_image(urls[0], str(save_path)):
+                                    done_paths.append(save_path)
+                                    status_txt.success(f"✅ [{count+1}/{len(selected)}] {slot}.jpg 저장 완료")
+                                else:
+                                    status_txt.warning(f"⚠ [{count+1}/{len(selected)}] 슬롯 {slot} 생성 실패")
+
+                            except Exception as e:
+                                status_txt.error(f"[{count+1}] 오류: {e}")
+
+                            progress_bar.progress((count + 1) / len(selected))
+
+                        # 완료 후 갤러리 표시
+                        status_txt.success(f"🎉 완료! {len(done_paths)}장 저장됨 → {post_dir}")
+                        if done_paths:
+                            cols = st.columns(5)
+                            for i, p in enumerate(done_paths):
+                                with cols[i % 5]:
+                                    st.image(str(p), caption=p.name, use_container_width=True)
+
+        # ── 모드 2: 업로드 이미지 기반 ──
+        else:
+            st.markdown("참조 이미지를 업로드하면 그 스타일을 반영한 새 이미지를 생성합니다.")
+
+            col_up, col_form = st.columns([1, 2])
+
+            with col_up:
+                uploaded = st.file_uploader(
+                    "참조 이미지 업로드",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    help="조감도, 평면도, 현장 사진 등을 올리면 그 분위기를 반영합니다.",
+                )
+                if uploaded:
+                    st.image(uploaded, caption="업로드된 참조 이미지", use_container_width=True)
+
+            with col_form:
+                prompt_input = st.text_area(
+                    "이미지 설명 (영문 권장)",
+                    placeholder="Modern Korean luxury apartment complex, aerial view,\n"
+                                "golden hour lighting, photorealistic, 8K...",
+                    height=110,
+                )
+                strength = st.slider(
+                    "원본 이미지 영향도",
+                    min_value=0.1, max_value=0.9, value=0.45, step=0.05,
+                    help="낮을수록 프롬프트 중심, 높을수록 원본 이미지 유지",
+                )
+                st.caption(f"{'← 프롬프트 중심':<25} {'원본 유지 →':>20}")
+
+                # 저장 위치 선택
+                posts = get_all_posts()
+                save_options = ["📁 새 폴더 (오늘 날짜)"] + [f"[{p['date']}] {p['title']}" for p in posts]
+                save_sel = st.selectbox("저장할 포스트 폴더", save_options)
+
+                if save_sel == "📁 새 폴더 (오늘 날짜)":
+                    today = datetime.datetime.now().strftime("%Y-%m-%d")
+                    save_dir = POSTS_DIR / today / "generated_images"
+                else:
+                    pidx = save_options.index(save_sel) - 1
+                    save_dir = posts[pidx]["dir"]
+
+                num_gen = st.number_input("생성할 이미지 수", min_value=1, max_value=4, value=1)
+
+            # 생성 버튼
+            can_generate = prompt_input.strip() != ""
+            if not can_generate:
+                st.warning("이미지 설명(프롬프트)을 입력해주세요.")
+
+            if st.button(
+                "🎨 이미지 생성 시작",
+                type="primary",
+                disabled=not can_generate,
+                use_container_width=False,
+            ):
+                from leonardo_generator import (
+                    upload_init_image,
+                    generate_text_to_image,
+                    generate_image_to_image,
+                    poll_until_complete,
+                    download_image,
+                )
+
+                save_dir.mkdir(parents=True, exist_ok=True)
+                status_txt = st.empty()
+
+                try:
+                    # 이미지 업로드 (있는 경우)
+                    init_image_id = None
+                    if uploaded:
+                        status_txt.write("☁️ 참조 이미지 Leonardo에 업로드 중...")
+                        ext = uploaded.name.rsplit(".", 1)[-1].lower()
+                        init_image_id = upload_init_image(uploaded.getvalue(), ext, leo_key)
+                        status_txt.write("✅ 업로드 완료. 이미지 생성 요청 중...")
+
+                    # 생성 요청
+                    if init_image_id:
+                        gen_id = generate_image_to_image(
+                            prompt_input.strip(), init_image_id, strength, leo_key,
+                            num_images=int(num_gen),
+                        )
+                    else:
+                        gen_id = generate_text_to_image(
+                            prompt_input.strip(), leo_key, num_images=int(num_gen),
+                        )
+
+                    # 폴링
+                    tick_txt = st.empty()
+                    def on_tick_up(elapsed, _t=tick_txt):
+                        _t.caption(f"생성 중... {elapsed}초 경과")
+
+                    status_txt.write("⏳ Leonardo가 이미지를 그리는 중...")
+                    urls = poll_until_complete(gen_id, leo_key, on_tick=on_tick_up)
+                    tick_txt.empty()
+
+                    if urls:
+                        ts   = datetime.datetime.now().strftime("%H%M%S")
+                        cols = st.columns(len(urls))
+                        for i, url in enumerate(urls):
+                            fname     = f"leo_{ts}_{i+1}.jpg"
+                            save_path = save_dir / fname
+                            download_image(url, str(save_path))
+                            with cols[i]:
+                                st.image(str(save_path), caption=fname, use_container_width=True)
+
+                        status_txt.success(f"🎉 {len(urls)}장 생성 완료! 저장 위치: {save_dir}")
+                    else:
+                        status_txt.error("이미지 생성에 실패했습니다. 프롬프트나 API 키를 확인해주세요.")
+
+                except Exception as e:
+                    status_txt.error(f"오류 발생: {e}")
+
+
+# ─────────────────────────────────────────
+# Tab 3: 포스트 관리
 # ─────────────────────────────────────────
 with tab_posts:
     st.subheader("생성된 포스트 목록")
