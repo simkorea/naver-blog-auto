@@ -758,40 +758,132 @@ with tab_posts:
 
         selected = posts[sel_idx]
         post_dir = selected["dir"]
+        images   = get_images(post_dir)
 
-        col_info, col_preview = st.columns([1, 3])
-
-        with col_info:
-            st.metric("날짜", selected["date"])
-            images = get_images(post_dir)
-            st.metric("이미지", f"{len(images)}장")
-            st.write("**제목**")
-            st.write(selected["title"])
-
-            if st.button("📤 이 포스트 업로드", type="primary", use_container_width=True):
-                st.info("브라우저가 자동으로 열립니다.")
-                try:
-                    from step2_upload import upload_to_naver_blog
-                    upload_to_naver_blog(folder_path=str(post_dir))
-                except Exception as e:
-                    st.error(f"업로드 오류: {e}")
-
-        with col_preview:
-            content_path = selected["content_path"]
-            content = content_path.read_text(encoding="utf-8")
-            st.text_area("원고 내용", value=content, height=350, disabled=True)
-
-        # 이미지 갤러리
-        if images:
-            st.write("---")
-            st.write(f"**이미지 갤러리 ({len(images)}장)**")
-            cols = st.columns(5)
-            for i, img_path in enumerate(images):
-                with cols[i % 5]:
+        # ── 상단: 메타 정보 + 액션 버튼 ──
+        meta_col, btn_col = st.columns([3, 1])
+        with meta_col:
+            st.markdown(f"📅 **{selected['date']}** &nbsp;|&nbsp; 🖼️ **{len(images)}장** &nbsp;|&nbsp; 📁 `{post_dir.name}`")
+        with btn_col:
+            if PLAYWRIGHT_OK:
+                if st.button("📤 네이버 업로드", type="primary", use_container_width=True, key="mgmt_upload"):
+                    st.info("브라우저가 자동으로 열립니다.")
                     try:
-                        st.image(str(img_path), caption=img_path.name, use_container_width=True)
-                    except Exception:
-                        st.caption(f"⚠ {img_path.name}")
+                        from step2_upload import upload_to_naver_blog
+                        upload_to_naver_blog(folder_path=str(post_dir))
+                    except Exception as e:
+                        st.error(f"업로드 오류: {e}")
+            else:
+                st.button("📤 업로드 (로컬 전용)", disabled=True,
+                          use_container_width=True, key="mgmt_upload_disabled")
+
+        st.divider()
+
+        # ── 원고 편집 ──
+        st.markdown("##### ✏️ 원고 편집")
+        content_path = selected["content_path"]
+        mgmt_content_key = f"mgmt_content_{sel_idx}"
+        if mgmt_content_key not in st.session_state:
+            st.session_state[mgmt_content_key] = content_path.read_text(encoding="utf-8")
+
+        mgmt_edited = st.text_area(
+            "원고",
+            value=st.session_state[mgmt_content_key],
+            height=320,
+            label_visibility="collapsed",
+            key=f"mgmt_editor_{sel_idx}",
+        )
+        if mgmt_edited != st.session_state[mgmt_content_key]:
+            st.session_state[mgmt_content_key] = mgmt_edited
+
+        save_col, zip_col = st.columns(2)
+        with save_col:
+            if st.button("💾 저장", use_container_width=True, key="mgmt_save"):
+                content_path.write_text(st.session_state[mgmt_content_key], encoding="utf-8")
+                st.toast("저장됐습니다 ✅")
+        with zip_col:
+            zip_bytes = make_zip(post_dir)
+            st.download_button(
+                label="📦 ZIP 다운로드",
+                data=zip_bytes,
+                file_name=f"{post_dir.name}.zip",
+                mime="application/zip",
+                use_container_width=True,
+                key="mgmt_zip",
+            )
+
+        # ── 이미지 관리 ──
+        if images:
+            st.divider()
+            st.markdown(f"##### 🖼️ 이미지 관리 ({len(images)}장)")
+
+            mgmt_order_key = f"mgmt_img_order_{sel_idx}"
+            if mgmt_order_key not in st.session_state:
+                st.session_state[mgmt_order_key] = [str(p) for p in images]
+            mgmt_imgs = st.session_state[mgmt_order_key]
+
+            COLS = 5
+            for row_s in range(0, len(mgmt_imgs), COLS):
+                row_imgs = mgmt_imgs[row_s : row_s + COLS]
+                cols = st.columns(COLS)
+                for j, img_path in enumerate(row_imgs):
+                    idx = row_s + j
+                    with cols[j]:
+                        try:
+                            st.image(img_path, use_container_width=True)
+                        except Exception:
+                            st.write("⚠")
+                        st.caption(f"**{idx+1}번** `{Path(img_path).name}`")
+                        bc1, bc2, bc3 = st.columns(3)
+                        with bc1:
+                            if st.button("↑", key=f"mgmt_up_{sel_idx}_{idx}",
+                                         use_container_width=True, disabled=(idx == 0)):
+                                mgmt_imgs[idx], mgmt_imgs[idx-1] = mgmt_imgs[idx-1], mgmt_imgs[idx]
+                                st.session_state[mgmt_order_key] = mgmt_imgs
+                                save_img_order(post_dir, mgmt_imgs)
+                                st.rerun()
+                        with bc2:
+                            if st.button("↓", key=f"mgmt_dn_{sel_idx}_{idx}",
+                                         use_container_width=True,
+                                         disabled=(idx == len(mgmt_imgs) - 1)):
+                                mgmt_imgs[idx], mgmt_imgs[idx+1] = mgmt_imgs[idx+1], mgmt_imgs[idx]
+                                st.session_state[mgmt_order_key] = mgmt_imgs
+                                save_img_order(post_dir, mgmt_imgs)
+                                st.rerun()
+                        with bc3:
+                            if st.button("🗑", key=f"mgmt_del_{sel_idx}_{idx}",
+                                         use_container_width=True):
+                                mgmt_imgs.pop(idx)
+                                st.session_state[mgmt_order_key] = mgmt_imgs
+                                save_img_order(post_dir, mgmt_imgs)
+                                st.rerun()
+
+            # 이미지 추가
+            mgmt_upload_key = f"mgmt_last_upload_{sel_idx}"
+            if mgmt_upload_key not in st.session_state:
+                st.session_state[mgmt_upload_key] = ""
+
+            mgmt_added = st.file_uploader(
+                "📎 이미지 추가 (여러 장 동시 선택 가능)",
+                type=["jpg", "jpeg", "png", "webp"],
+                accept_multiple_files=True,
+                key=f"mgmt_uploader_{sel_idx}",
+            )
+            if mgmt_added:
+                batch_id = "_".join(f"{f.name}_{f.size}" for f in mgmt_added)
+                if st.session_state[mgmt_upload_key] != batch_id:
+                    existing_nums = [int(Path(p).stem) for p in mgmt_imgs if Path(p).stem.isdigit()]
+                    next_num = max(existing_nums, default=0) + 1
+                    for uf in mgmt_added:
+                        save_path = post_dir / f"{next_num}.jpg"
+                        save_path.write_bytes(uf.getvalue())
+                        mgmt_imgs.append(str(save_path))
+                        next_num += 1
+                    st.session_state[mgmt_order_key] = mgmt_imgs
+                    save_img_order(post_dir, mgmt_imgs)
+                    st.session_state[mgmt_upload_key] = batch_id
+                    st.success(f"✅ {len(mgmt_added)}장 추가됨")
+                    st.rerun()
 
 # ─────────────────────────────────────────
 # Tab 3: 시스템 상태

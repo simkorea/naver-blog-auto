@@ -1,10 +1,19 @@
 import os
 import time
-import pyperclip
 import datetime
-import math
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
+
+try:
+    import pyperclip
+    PYPERCLIP_OK = True
+except ImportError:
+    PYPERCLIP_OK = False
+
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_OK = True
+except ImportError:
+    PLAYWRIGHT_OK = False
 
 load_dotenv()
 
@@ -81,6 +90,12 @@ def get_images(folder_path):
     return all_imgs
 
 def upload_to_naver_blog(folder_path=None):
+    if not PLAYWRIGHT_OK:
+        print("[오류] playwright가 설치되지 않았습니다. pip install playwright 후 playwright install 실행하세요.")
+        return
+    if not PYPERCLIP_OK:
+        print("[오류] pyperclip이 설치되지 않았습니다. pip install pyperclip 실행하세요.")
+        return
     if not NAVER_ID or not NAVER_PW or NAVER_ID == "your_naver_id":
         print("[오류] .env 파일에 네이버 계정 정보를 입력해주세요.")
         return
