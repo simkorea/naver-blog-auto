@@ -1,0 +1,9 @@
+[server]
+maxUploadSize = 200
+enableXsrfProtection = true
+
+[theme]
+base = "dark"
+
+[browser]
+gatherUsageStats = false

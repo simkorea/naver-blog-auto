@@ -1,5 +1,6 @@
 # 환경변수 (API 키 · 계정 정보)
 .env
+.streamlit/secrets.toml
 
 # Python 가상환경
 venv/

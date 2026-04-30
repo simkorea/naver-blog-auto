@@ -1,13 +1,43 @@
-import streamlit as st
+import io
 import os
-import sys
 import re
+import sys
 import subprocess
 import datetime
+import zipfile
 from pathlib import Path
+
+import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── 클라우드 / 로컬 감지 ──
+import importlib.util
+PLAYWRIGHT_OK = importlib.util.find_spec("playwright") is not None
+
+IS_CLOUD = not Path(".env").exists()
+
+
+def get_secret(key: str) -> str:
+    """로컬 .env → Streamlit Secrets 순서로 키를 읽습니다."""
+    val = os.getenv(key, "")
+    if val:
+        return val
+    try:
+        return st.secrets.get(key, "")
+    except Exception:
+        return ""
+
+
+def make_zip(post_dir: Path) -> bytes:
+    """포스트 폴더 전체를 ZIP으로 묶어 bytes로 반환합니다."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(post_dir.iterdir()):
+            if f.is_file():
+                zf.write(f, f.name)
+    return buf.getvalue()
 
 
 # ── 경로 설정 ──
@@ -95,13 +125,11 @@ def save_img_order(post_dir: Path, order: list):
     )
 
 def check_env():
-    from dotenv import load_dotenv
-    load_dotenv(BASE_DIR / ".env")
     return {
-        "Gemini API":    bool(os.getenv("GEMINI_API_KEY")),
-        "Leonardo API":  bool(os.getenv("LEONARDO_API_KEY")),
-        "Naver ID":      bool(os.getenv("NAVER_ID")),
-        "Naver PW":      bool(os.getenv("NAVER_PASSWORD")),
+        "Gemini API":   bool(get_secret("GEMINI_API_KEY")),
+        "Leonardo API": bool(get_secret("LEONARDO_API_KEY")),
+        "Naver ID":     bool(get_secret("NAVER_ID")),
+        "Naver PW":     bool(get_secret("NAVER_PASSWORD")),
     }
 
 def run_generation(choice, input_data, persona, extra):
@@ -191,6 +219,14 @@ with st.sidebar:
 # 메인 — 탭
 # ══════════════════════════════════════════
 st.title("🏠 네이버 부동산 블로그 자동화")
+
+if IS_CLOUD:
+    st.info(
+        "☁️ **클라우드 모드** — 원고 생성·편집·이미지 생성·미리보기를 지원합니다.  \n"
+        "네이버 업로드는 **ZIP 다운로드 후 로컬**에서 `python step2_upload.py`로 실행하세요.  \n"
+        "생성된 포스트는 현재 세션에서만 유지됩니다. 작업 후 ZIP을 반드시 저장하세요."
+    )
+
 tab_editor, tab_image, tab_posts, tab_status = st.tabs(["📝 원고 에디터", "🎨 이미지 생성", "📂 포스트 관리", "📊 시스템 상태"])
 
 # ─────────────────────────────────────────
@@ -413,36 +449,57 @@ with tab_editor:
         st.divider()
         st.subheader("4  네이버 블로그 업로드")
 
-        col_up, col_info = st.columns([1, 2])
-        with col_info:
-            char_cnt = len(st.session_state["edited_content"])
-            img_cnt  = len(st.session_state["img_order"])
-            st.info(
-                f"📄 원고 **{char_cnt:,}자**  |  🖼️ 이미지 **{img_cnt}장**  |  "
-                f"📁 `{post_dir.name}`\n\n"
-                f"업로드 시 현재 편집 내용과 이미지 순서가 자동 저장됩니다."
-            )
+        char_cnt = len(st.session_state["edited_content"])
+        img_cnt  = len(st.session_state["img_order"])
+        st.info(
+            f"📄 원고 **{char_cnt:,}자**  |  🖼️ 이미지 **{img_cnt}장**  |  📁 `{post_dir.name}`"
+        )
+
+        col_up, col_dl = st.columns(2)
+
+        # ▌업로드 버튼 (로컬에서만 활성)
         with col_up:
-            if st.button("📤 네이버 블로그에 업로드", type="primary",
-                         use_container_width=True, key="upload_btn"):
-                # 업로드 전 최신 상태 저장
+            if PLAYWRIGHT_OK:
+                if st.button("📤 네이버 블로그에 업로드", type="primary",
+                             use_container_width=True, key="upload_btn"):
+                    (post_dir / "content.txt").write_text(
+                        st.session_state["edited_content"], encoding="utf-8")
+                    save_img_order(post_dir, st.session_state["img_order"])
+                    st.info("브라우저가 자동으로 열립니다. 글 확인 후 [발행] 버튼을 직접 눌러주세요.")
+                    try:
+                        from step2_upload import upload_to_naver_blog
+                        upload_to_naver_blog(folder_path=str(post_dir))
+                    except Exception as e:
+                        st.error(f"업로드 오류: {e}")
+            else:
+                st.button("📤 네이버 업로드 (로컬 전용)", disabled=True,
+                          use_container_width=True, key="upload_disabled")
+                st.caption("클라우드 환경에서는 업로드를 지원하지 않습니다.\n"
+                           "ZIP을 다운로드한 후 로컬에서 `step2_upload.py`를 실행하세요.")
+
+        # ▌ZIP 다운로드 (로컬·클라우드 모두 사용 가능)
+        with col_dl:
+            if st.button("💾 최신 상태 저장", use_container_width=True, key="save_before_zip"):
                 (post_dir / "content.txt").write_text(
                     st.session_state["edited_content"], encoding="utf-8")
                 save_img_order(post_dir, st.session_state["img_order"])
+                st.toast("저장됐습니다 ✅")
 
-                st.info("브라우저가 자동으로 열립니다. 글 확인 후 [발행] 버튼을 직접 눌러주세요.")
-                try:
-                    from step2_upload import upload_to_naver_blog
-                    upload_to_naver_blog(folder_path=str(post_dir))
-                except Exception as e:
-                    st.error(f"업로드 오류: {e}")
+            zip_bytes = make_zip(post_dir)
+            st.download_button(
+                label="📦 포스트 ZIP 다운로드",
+                data=zip_bytes,
+                file_name=f"{post_dir.name}.zip",
+                mime="application/zip",
+                use_container_width=True,
+                key="zip_download",
+            )
 
 # ─────────────────────────────────────────
 # Tab 2: 이미지 생성
 # ─────────────────────────────────────────
 with tab_image:
-    from dotenv import load_dotenv as _ld; _ld()
-    leo_key = os.getenv("LEONARDO_API_KEY", "")
+    leo_key = get_secret("LEONARDO_API_KEY")
 
     if not leo_key:
         st.error("❌ .env 파일에 LEONARDO_API_KEY가 없습니다.")
