@@ -133,6 +133,164 @@ def check_env():
         "Naver PW":     bool(get_secret("NAVER_PASSWORD")),
     }
 
+
+def render_image_manager(post_dir: Path, order_key: str, prefix: str):
+    """이미지 관리 UI: 체크박스 일괄 작업 + 개별 ↑↓🗑 + 파일 추가."""
+
+    if order_key not in st.session_state:
+        st.session_state[order_key] = [str(p) for p in get_images(post_dir)]
+    imgs: list = st.session_state[order_key]
+
+    if not imgs:
+        st.info("이미지가 없습니다.")
+        return
+
+    # 현재 체크된 이미지 이름 수집 (checkbox 위젯에서 읽기)
+    checked_names: set = {
+        Path(p).name for p in imgs
+        if st.session_state.get(f"{prefix}_chk_{Path(p).name}", False)
+    }
+
+    img_col, action_col = st.columns([4, 1], gap="medium")
+
+    # ── 오른쪽: 일괄 작업 패널 ──
+    with action_col:
+        st.markdown("**일괄 작업**")
+        st.caption(f"{len(checked_names)} / {len(imgs)}개 선택")
+
+        if st.button("☑ 전체 선택", use_container_width=True, key=f"{prefix}_sel_all"):
+            for p in imgs:
+                st.session_state[f"{prefix}_chk_{Path(p).name}"] = True
+            st.rerun()
+
+        if st.button("□ 전체 해제", use_container_width=True, key=f"{prefix}_desel_all"):
+            for p in imgs:
+                st.session_state[f"{prefix}_chk_{Path(p).name}"] = False
+            st.rerun()
+
+        st.divider()
+
+        if st.button(
+            f"🗑 선택 삭제\n({len(checked_names)}개)",
+            use_container_width=True,
+            type="primary",
+            disabled=(len(checked_names) == 0),
+            key=f"{prefix}_bulk_del",
+        ):
+            new_imgs = []
+            for p in imgs:
+                name = Path(p).name
+                if name in checked_names:
+                    Path(p).unlink(missing_ok=True)
+                    st.session_state.pop(f"{prefix}_chk_{name}", None)
+                else:
+                    new_imgs.append(p)
+            st.session_state[order_key] = new_imgs
+            save_img_order(post_dir, new_imgs)
+            st.rerun()
+
+        st.divider()
+
+        move_disabled = len(checked_names) == 0
+        if st.button("↑ 위로", use_container_width=True,
+                     disabled=move_disabled, key=f"{prefix}_bulk_up"):
+            names = [Path(p).name for p in imgs]
+            for i in range(1, len(names)):
+                if names[i] in checked_names and names[i - 1] not in checked_names:
+                    names[i], names[i - 1] = names[i - 1], names[i]
+            nm2p = {Path(p).name: p for p in imgs}
+            new_order = [nm2p[n] for n in names if n in nm2p]
+            st.session_state[order_key] = new_order
+            save_img_order(post_dir, new_order)
+            st.rerun()
+
+        if st.button("↓ 아래로", use_container_width=True,
+                     disabled=move_disabled, key=f"{prefix}_bulk_dn"):
+            names = [Path(p).name for p in imgs]
+            for i in range(len(names) - 2, -1, -1):
+                if names[i] in checked_names and names[i + 1] not in checked_names:
+                    names[i], names[i + 1] = names[i + 1], names[i]
+            nm2p = {Path(p).name: p for p in imgs}
+            new_order = [nm2p[n] for n in names if n in nm2p]
+            st.session_state[order_key] = new_order
+            save_img_order(post_dir, new_order)
+            st.rerun()
+
+    # ── 왼쪽: 이미지 그리드 ──
+    with img_col:
+        COLS = 5
+        for row_s in range(0, len(imgs), COLS):
+            row_imgs = imgs[row_s : row_s + COLS]
+            cols = st.columns(COLS)
+            for j, img_path in enumerate(row_imgs):
+                idx = row_s + j
+                name = Path(img_path).name
+                with cols[j]:
+                    st.checkbox(
+                        "선택",
+                        key=f"{prefix}_chk_{name}",
+                        label_visibility="collapsed",
+                    )
+                    try:
+                        st.image(img_path, use_container_width=True)
+                    except Exception:
+                        st.write("⚠")
+                    st.caption(f"**{idx+1}번** `{name}`")
+                    bc1, bc2, bc3 = st.columns(3)
+                    with bc1:
+                        if st.button("↑", key=f"{prefix}_up_{idx}",
+                                     use_container_width=True, disabled=(idx == 0)):
+                            imgs[idx], imgs[idx - 1] = imgs[idx - 1], imgs[idx]
+                            st.session_state[order_key] = imgs
+                            save_img_order(post_dir, imgs)
+                            st.rerun()
+                    with bc2:
+                        if st.button("↓", key=f"{prefix}_dn_{idx}",
+                                     use_container_width=True,
+                                     disabled=(idx == len(imgs) - 1)):
+                            imgs[idx], imgs[idx + 1] = imgs[idx + 1], imgs[idx]
+                            st.session_state[order_key] = imgs
+                            save_img_order(post_dir, imgs)
+                            st.rerun()
+                    with bc3:
+                        if st.button("🗑", key=f"{prefix}_del_{idx}",
+                                     use_container_width=True):
+                            Path(imgs[idx]).unlink(missing_ok=True)
+                            imgs.pop(idx)
+                            st.session_state[order_key] = imgs
+                            save_img_order(post_dir, imgs)
+                            st.rerun()
+
+    # ── 이미지 추가 업로드 ──
+    st.write("")
+    upload_batch_key = f"{prefix}_last_upload"
+    if upload_batch_key not in st.session_state:
+        st.session_state[upload_batch_key] = ""
+
+    added_files = st.file_uploader(
+        "📎 이미지 추가 (여러 장 동시 선택 가능)",
+        type=["jpg", "jpeg", "png", "webp"],
+        accept_multiple_files=True,
+        key=f"{prefix}_uploader",
+    )
+    if added_files:
+        batch_id = "_".join(f"{f.name}_{f.size}" for f in added_files)
+        if st.session_state[upload_batch_key] != batch_id:
+            existing_nums = [int(Path(p).stem) for p in imgs if Path(p).stem.isdigit()]
+            next_num = max(existing_nums, default=0) + 1
+            added_names = []
+            for uf in added_files:
+                save_path = post_dir / f"{next_num}.jpg"
+                save_path.write_bytes(uf.getvalue())
+                imgs.append(str(save_path))
+                added_names.append(save_path.name)
+                next_num += 1
+            st.session_state[order_key] = imgs
+            save_img_order(post_dir, imgs)
+            st.session_state[upload_batch_key] = batch_id
+            st.success(f"✅ {len(added_names)}장 추가됨: {', '.join(added_names)}")
+            st.rerun()
+
 def run_generation(choice, input_data, persona, extra):
     """subprocess로 원고 생성 실행. 실시간 로그를 yield."""
     python_exe = sys.executable
@@ -389,70 +547,8 @@ with tab_editor:
         # ── 섹션 3: 이미지 관리 ──
         st.divider()
         st.subheader(f"3  이미지 관리  ({len(st.session_state['img_order'])}장)")
-        st.caption("순서 변경(↑↓), 삭제(🗑), 새 이미지 추가가 가능합니다. 변경 즉시 미리보기에 반영됩니다.")
-
-        imgs = st.session_state["img_order"]
-        COLS = 5
-        for row_s in range(0, len(imgs), COLS):
-            row_imgs = imgs[row_s : row_s + COLS]
-            cols = st.columns(COLS)
-            for j, img_path in enumerate(row_imgs):
-                idx = row_s + j
-                with cols[j]:
-                    try:
-                        st.image(img_path, use_container_width=True)
-                    except Exception:
-                        st.write("⚠")
-                    st.caption(f"**{idx+1}번** `{Path(img_path).name}`")
-
-                    bc1, bc2, bc3 = st.columns(3)
-                    with bc1:
-                        up_disabled = idx == 0
-                        if st.button("↑", key=f"up_{idx}", use_container_width=True,
-                                     disabled=up_disabled):
-                            imgs[idx], imgs[idx-1] = imgs[idx-1], imgs[idx]
-                            st.session_state["img_order"] = imgs
-                            save_img_order(post_dir, imgs)
-                            st.rerun()
-                    with bc2:
-                        dn_disabled = idx == len(imgs) - 1
-                        if st.button("↓", key=f"dn_{idx}", use_container_width=True,
-                                     disabled=dn_disabled):
-                            imgs[idx], imgs[idx+1] = imgs[idx+1], imgs[idx]
-                            st.session_state["img_order"] = imgs
-                            save_img_order(post_dir, imgs)
-                            st.rerun()
-                    with bc3:
-                        if st.button("🗑", key=f"del_{idx}", use_container_width=True):
-                            imgs.pop(idx)
-                            st.session_state["img_order"] = imgs
-                            save_img_order(post_dir, imgs)
-                            st.rerun()
-
-        # 이미지 추가 업로드
-        st.write("")
-        added_files = st.file_uploader(
-            "📎 이미지 직접 추가 (여러 장 동시 선택 가능)",
-            type=["jpg", "jpeg", "png", "webp"],
-            accept_multiple_files=True,
-            key="add_img_uploader",
-        )
-        if added_files:
-            batch_id = "_".join(f"{f.name}_{f.size}" for f in added_files)
-            if st.session_state["last_upload_batch_id"] != batch_id:
-                existing_nums = [int(Path(p).stem) for p in imgs if Path(p).stem.isdigit()]
-                next_num = max(existing_nums, default=0) + 1
-                added_names = []
-                for uf in added_files:
-                    save_path = post_dir / f"{next_num}.jpg"
-                    save_path.write_bytes(uf.getvalue())
-                    st.session_state["img_order"].append(str(save_path))
-                    added_names.append(save_path.name)
-                    next_num += 1
-                save_img_order(post_dir, st.session_state["img_order"])
-                st.session_state["last_upload_batch_id"] = batch_id
-                st.success(f"✅ {len(added_names)}장 추가됨: {', '.join(added_names)}")
-                st.rerun()
+        st.caption("체크 후 일괄 삭제·이동 또는 개별 ↑↓🗑. 변경 즉시 미리보기에 반영됩니다.")
+        render_image_manager(post_dir, "img_order", "ed")
 
         # ── 섹션 4: 업로드 ──
         st.divider()
@@ -813,77 +909,12 @@ with tab_posts:
             )
 
         # ── 이미지 관리 ──
+        mgmt_order_key = f"mgmt_img_order_{sel_idx}"
         if images:
             st.divider()
-            st.markdown(f"##### 🖼️ 이미지 관리 ({len(images)}장)")
-
-            mgmt_order_key = f"mgmt_img_order_{sel_idx}"
-            if mgmt_order_key not in st.session_state:
-                st.session_state[mgmt_order_key] = [str(p) for p in images]
-            mgmt_imgs = st.session_state[mgmt_order_key]
-
-            COLS = 5
-            for row_s in range(0, len(mgmt_imgs), COLS):
-                row_imgs = mgmt_imgs[row_s : row_s + COLS]
-                cols = st.columns(COLS)
-                for j, img_path in enumerate(row_imgs):
-                    idx = row_s + j
-                    with cols[j]:
-                        try:
-                            st.image(img_path, use_container_width=True)
-                        except Exception:
-                            st.write("⚠")
-                        st.caption(f"**{idx+1}번** `{Path(img_path).name}`")
-                        bc1, bc2, bc3 = st.columns(3)
-                        with bc1:
-                            if st.button("↑", key=f"mgmt_up_{sel_idx}_{idx}",
-                                         use_container_width=True, disabled=(idx == 0)):
-                                mgmt_imgs[idx], mgmt_imgs[idx-1] = mgmt_imgs[idx-1], mgmt_imgs[idx]
-                                st.session_state[mgmt_order_key] = mgmt_imgs
-                                save_img_order(post_dir, mgmt_imgs)
-                                st.rerun()
-                        with bc2:
-                            if st.button("↓", key=f"mgmt_dn_{sel_idx}_{idx}",
-                                         use_container_width=True,
-                                         disabled=(idx == len(mgmt_imgs) - 1)):
-                                mgmt_imgs[idx], mgmt_imgs[idx+1] = mgmt_imgs[idx+1], mgmt_imgs[idx]
-                                st.session_state[mgmt_order_key] = mgmt_imgs
-                                save_img_order(post_dir, mgmt_imgs)
-                                st.rerun()
-                        with bc3:
-                            if st.button("🗑", key=f"mgmt_del_{sel_idx}_{idx}",
-                                         use_container_width=True):
-                                mgmt_imgs.pop(idx)
-                                st.session_state[mgmt_order_key] = mgmt_imgs
-                                save_img_order(post_dir, mgmt_imgs)
-                                st.rerun()
-
-            # 이미지 추가
-            mgmt_upload_key = f"mgmt_last_upload_{sel_idx}"
-            if mgmt_upload_key not in st.session_state:
-                st.session_state[mgmt_upload_key] = ""
-
-            mgmt_added = st.file_uploader(
-                "📎 이미지 추가 (여러 장 동시 선택 가능)",
-                type=["jpg", "jpeg", "png", "webp"],
-                accept_multiple_files=True,
-                key=f"mgmt_uploader_{sel_idx}",
-            )
-            if mgmt_added:
-                batch_id = "_".join(f"{f.name}_{f.size}" for f in mgmt_added)
-                if st.session_state[mgmt_upload_key] != batch_id:
-                    existing_nums = [int(Path(p).stem) for p in mgmt_imgs if Path(p).stem.isdigit()]
-                    next_num = max(existing_nums, default=0) + 1
-                    for uf in mgmt_added:
-                        save_path = post_dir / f"{next_num}.jpg"
-                        save_path.write_bytes(uf.getvalue())
-                        mgmt_imgs.append(str(save_path))
-                        next_num += 1
-                    st.session_state[mgmt_order_key] = mgmt_imgs
-                    save_img_order(post_dir, mgmt_imgs)
-                    st.session_state[mgmt_upload_key] = batch_id
-                    st.success(f"✅ {len(mgmt_added)}장 추가됨")
-                    st.rerun()
+            n_imgs = len(st.session_state.get(mgmt_order_key, images))
+            st.markdown(f"##### 🖼️ 이미지 관리 ({n_imgs}장)")
+            render_image_manager(post_dir, mgmt_order_key, f"mgmt_{sel_idx}")
 
 # ─────────────────────────────────────────
 # Tab 3: 시스템 상태
