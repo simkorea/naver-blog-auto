@@ -29,6 +29,9 @@ for k, v in {
     "last_post_dir": None,
     "generation_logs": [],
     "generation_done": False,
+    "editor_post_key": "",
+    "edited_content": "",
+    "img_order": [],
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -59,12 +62,37 @@ def get_all_posts():
     return posts
 
 def get_images(folder: Path):
-    imgs = [f for f in folder.iterdir() if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")]
+    order_file = folder / "image_order.txt"
+    all_imgs = [f for f in folder.iterdir()
+                if f.is_file() and f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")]
     try:
-        imgs.sort(key=lambda x: int(x.stem))
+        all_imgs.sort(key=lambda x: int(x.stem))
     except Exception:
-        imgs.sort()
-    return imgs
+        all_imgs.sort()
+
+    if order_file.exists():
+        img_map = {f.name: f for f in all_imgs}
+        ordered, seen = [], set()
+        for name in order_file.read_text(encoding="utf-8").splitlines():
+            name = name.strip()
+            if name in img_map and name not in seen:
+                ordered.append(img_map[name])
+                seen.add(name)
+        for f in all_imgs:
+            if f.name not in seen:
+                ordered.append(f)
+        return ordered
+    return all_imgs
+
+
+def load_img_order(post_dir: Path) -> list:
+    return [str(p) for p in get_images(post_dir)]
+
+
+def save_img_order(post_dir: Path, order: list):
+    (post_dir / "image_order.txt").write_text(
+        "\n".join(Path(p).name for p in order), encoding="utf-8"
+    )
 
 def check_env():
     from dotenv import load_dotenv
@@ -170,27 +198,27 @@ tab_editor, tab_image, tab_posts, tab_status = st.tabs(["📝 원고 에디터",
 # ─────────────────────────────────────────
 with tab_editor:
 
-    # ── 생성 버튼 ──
+    # ══ 섹션 1: 원고 생성 ══
     st.subheader("1  AI 원고 자동 생성")
     col_btn, col_hint = st.columns([1, 2])
     with col_btn:
         go = st.button("✨ 블로그 원고 자동 생성", type="primary", use_container_width=True)
     with col_hint:
-        st.info(f"모드: **{mode}**   |   어조: **{persona}**   |   약 2~5분 소요")
+        st.info(f"모드: **{mode}**  |  어조: **{persona}**  |  약 2~5분 소요")
 
     if go:
         if choice in ("2", "3") and not input_data.strip():
             st.warning("키워드 또는 주제를 입력해주세요.")
         else:
-            st.session_state["generation_done"] = False
-            st.session_state["generation_logs"] = []
-            st.session_state["last_post_dir"]   = None
-
+            st.session_state.update({
+                "generation_done": False,
+                "generation_logs": [],
+                "last_post_dir":   None,
+                "editor_post_key": "",
+            })
             log_box  = st.empty()
-            logs     = []
-            done_dir = None
-
-            extra_full = extra.strip() if extra.strip() else None
+            logs, done_dir = [], None
+            extra_full = extra.strip() or None
 
             for log_line, result_dir in run_generation(choice, input_data.strip(), persona, extra_full):
                 if log_line is not None:
@@ -202,93 +230,212 @@ with tab_editor:
             log_box.code("\n".join(logs), language=None)
 
             if done_dir:
-                st.session_state["last_post_dir"]   = done_dir
-                st.session_state["generation_done"] = True
-                st.session_state["generation_logs"] = logs
-
-                # content.txt 로드
-                content_file = Path(done_dir) / "content.txt"
-                if content_file.exists():
-                    raw = content_file.read_text(encoding="utf-8")
+                raw = ""
+                cf = Path(done_dir) / "content.txt"
+                if cf.exists():
+                    raw = cf.read_text(encoding="utf-8")
                     if cta_text.strip() and cta_text.strip() not in raw:
                         raw = raw + "\n\n" + cta_text.strip()
-                    st.session_state["generated_content"] = raw
 
+                st.session_state.update({
+                    "last_post_dir":   done_dir,
+                    "generation_done": True,
+                    "generation_logs": logs,
+                    "edited_content":  raw,
+                    "editor_post_key": done_dir,
+                    "img_order":       load_img_order(Path(done_dir)),
+                })
                 st.success(f"✅ 완료!  저장 위치: {done_dir}")
                 st.rerun()
             else:
                 st.error("생성 중 오류가 발생했습니다. 위 로그를 확인해주세요.")
 
-    # ── 생성 결과 ──
+    # ══ 섹션 2+3+4: 편집 / 미리보기 / 이미지 관리 / 업로드 ══
     if st.session_state["generation_done"] and st.session_state["last_post_dir"]:
         post_dir = Path(st.session_state["last_post_dir"])
 
-        # 실시간 미리보기
-        st.subheader("실시간 미리보기")
-        align_css = {"좌측": "left", "중앙": "center", "양쪽": "justify"}[text_align]
-        preview_html = f"""
-<div style="background:#fff;color:#111;padding:28px 36px;border-radius:12px;
-            box-shadow:0 2px 12px rgba(0,0,0,.12);font-size:{content_font_size}px;
-            line-height:1.85;white-space:pre-wrap;text-align:{align_css};
-            font-family:'Malgun Gothic',sans-serif;max-height:420px;overflow-y:auto;">
-{st.session_state["generated_content"]}
-</div>"""
-        st.markdown(preview_html, unsafe_allow_html=True)
+        # 포스트가 바뀌면 세션 재초기화
+        if st.session_state["editor_post_key"] != str(post_dir):
+            raw = (post_dir / "content.txt").read_text(encoding="utf-8") \
+                  if (post_dir / "content.txt").exists() else ""
+            if cta_text.strip() and cta_text.strip() not in raw:
+                raw = raw + "\n\n" + cta_text.strip()
+            st.session_state["edited_content"]  = raw
+            st.session_state["img_order"]       = load_img_order(post_dir)
+            st.session_state["editor_post_key"] = str(post_dir)
 
-        # 원고 에디터
-        st.subheader("2  에디터 도구")
-        edited = st.text_area(
-            "원고 수정 (수정 후 저장 버튼)",
-            value=st.session_state["generated_content"],
-            height=380,
-            key="editor_area",
-        )
+        st.divider()
 
-        col_save, col_break, col_cta = st.columns(3)
-        with col_save:
-            if st.button("💾 수정사항 저장", use_container_width=True):
-                (post_dir / "content.txt").write_text(edited, encoding="utf-8")
-                st.session_state["generated_content"] = edited
-                st.success("저장됐습니다.")
+        # ── 섹션 2: 편집 ←→ 미리보기 분할 ──
+        st.subheader("2  편집  &  미리보기")
+        col_ed, col_pv = st.columns([1, 1], gap="large")
 
-        with col_break:
-            if st.button("↩ 마침표 기준 줄바꿈", use_container_width=True):
-                result = re.sub(r"(?<![0-9])\.(\s|$)", ".\n\n", edited)
-                st.session_state["generated_content"] = result
-                st.rerun()
+        # ▌왼쪽: 원고 편집기
+        with col_ed:
+            st.markdown("##### ✏️ 원고 편집")
 
-        with col_cta:
-            if st.button("📌 CTA 문구 삽입", use_container_width=True):
-                if cta_text.strip() not in edited:
-                    st.session_state["generated_content"] = edited + "\n\n" + cta_text.strip()
+            new_content = st.text_area(
+                "editor",
+                value=st.session_state["edited_content"],
+                height=560,
+                label_visibility="collapsed",
+                key="main_editor",
+            )
+            # 내용이 바뀌면 즉시 세션 반영 (다음 rerun에서 preview도 갱신)
+            if new_content != st.session_state["edited_content"]:
+                st.session_state["edited_content"] = new_content
+
+            # 글자 수 게이지
+            char_cnt = len(new_content)
+            badge = "🟢" if char_cnt >= 5000 else ("🟡" if char_cnt >= 3000 else "🔴")
+            st.progress(min(1.0, char_cnt / 5000),
+                        text=f"{badge} {char_cnt:,}자  /  목표 5,000자")
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if st.button("💾 저장", use_container_width=True, key="ed_save"):
+                    (post_dir / "content.txt").write_text(new_content, encoding="utf-8")
+                    st.toast("저장됐습니다 ✅")
+            with c2:
+                if st.button("↩ 자동 줄바꿈", use_container_width=True, key="ed_break"):
+                    st.session_state["edited_content"] = re.sub(
+                        r"(?<![0-9])\.(\s|$)", ".\n\n", new_content)
                     st.rerun()
+            with c3:
+                if st.button("📌 CTA 삽입", use_container_width=True, key="ed_cta"):
+                    if cta_text.strip() and cta_text.strip() not in new_content:
+                        st.session_state["edited_content"] = new_content + "\n\n" + cta_text.strip()
+                        st.rerun()
 
-        # 이미지 갤러리
-        images = get_images(post_dir)
-        if images:
-            st.subheader(f"3  수집된 이미지 ({len(images)}장)")
-            cols = st.columns(5)
-            for i, img_path in enumerate(images):
-                with cols[i % 5]:
+        # ▌오른쪽: 블로그 미리보기 (텍스트 + 이미지 교차)
+        with col_pv:
+            st.markdown("##### 👁 블로그 미리보기")
+
+            insert_every = st.select_slider(
+                "이미지 삽입 간격 (문단 수)",
+                options=[1, 2, 3, 4, 5, 6, 8, 10],
+                value=3,
+                help="몇 문단마다 이미지 1장을 삽입할지 설정합니다",
+            )
+
+            imgs      = st.session_state["img_order"]
+            paras     = [p.strip() for p in st.session_state["edited_content"].split("\n\n") if p.strip()]
+            img_idx   = 0
+
+            align_map = {"좌측": "left", "중앙": "center", "양쪽": "justify"}
+            align_css = align_map.get(text_align, "left")
+
+            # 스크롤 가능한 미리보기 컨테이너
+            with st.container(border=True):
+                for i, para in enumerate(paras):
+                    st.markdown(
+                        f"<p style='font-size:{content_font_size}px;line-height:1.9;"
+                        f"text-align:{align_css};font-family:Malgun Gothic,sans-serif;"
+                        f"margin:0 0 10px 0;'>{para}</p>",
+                        unsafe_allow_html=True,
+                    )
+                    if imgs and img_idx < len(imgs) and (i + 1) % insert_every == 0:
+                        try:
+                            st.image(imgs[img_idx], use_container_width=True)
+                        except Exception:
+                            st.caption(f"⚠ {Path(imgs[img_idx]).name}")
+                        img_idx += 1
+
+                # 남은 이미지를 미리보기 맨 뒤에
+                while img_idx < len(imgs):
                     try:
-                        st.image(str(img_path), caption=img_path.name, use_container_width=True)
+                        st.image(imgs[img_idx], use_container_width=True)
                     except Exception:
-                        st.caption(f"⚠ {img_path.name}")
+                        st.caption(f"⚠ {Path(imgs[img_idx]).name}")
+                    img_idx += 1
 
-        # 업로드
+        # ── 섹션 3: 이미지 관리 ──
+        st.divider()
+        st.subheader(f"3  이미지 관리  ({len(st.session_state['img_order'])}장)")
+        st.caption("순서 변경(↑↓), 삭제(🗑), 새 이미지 추가가 가능합니다. 변경 즉시 미리보기에 반영됩니다.")
+
+        imgs = st.session_state["img_order"]
+        COLS = 5
+        for row_s in range(0, len(imgs), COLS):
+            row_imgs = imgs[row_s : row_s + COLS]
+            cols = st.columns(COLS)
+            for j, img_path in enumerate(row_imgs):
+                idx = row_s + j
+                with cols[j]:
+                    try:
+                        st.image(img_path, use_container_width=True)
+                    except Exception:
+                        st.write("⚠")
+                    st.caption(f"**{idx+1}번** `{Path(img_path).name}`")
+
+                    bc1, bc2, bc3 = st.columns(3)
+                    with bc1:
+                        up_disabled = idx == 0
+                        if st.button("↑", key=f"up_{idx}", use_container_width=True,
+                                     disabled=up_disabled):
+                            imgs[idx], imgs[idx-1] = imgs[idx-1], imgs[idx]
+                            st.session_state["img_order"] = imgs
+                            save_img_order(post_dir, imgs)
+                            st.rerun()
+                    with bc2:
+                        dn_disabled = idx == len(imgs) - 1
+                        if st.button("↓", key=f"dn_{idx}", use_container_width=True,
+                                     disabled=dn_disabled):
+                            imgs[idx], imgs[idx+1] = imgs[idx+1], imgs[idx]
+                            st.session_state["img_order"] = imgs
+                            save_img_order(post_dir, imgs)
+                            st.rerun()
+                    with bc3:
+                        if st.button("🗑", key=f"del_{idx}", use_container_width=True):
+                            imgs.pop(idx)
+                            st.session_state["img_order"] = imgs
+                            save_img_order(post_dir, imgs)
+                            st.rerun()
+
+        # 이미지 추가 업로드
+        st.write("")
+        added = st.file_uploader(
+            "📎 이미지 직접 추가 (jpg/png/webp)",
+            type=["jpg", "jpeg", "png", "webp"],
+            key="add_img_uploader",
+        )
+        if added:
+            existing_nums = [int(Path(p).stem) for p in imgs if Path(p).stem.isdigit()]
+            next_num = max(existing_nums, default=0) + 1
+            save_path = post_dir / f"{next_num}.jpg"
+            save_path.write_bytes(added.getvalue())
+            st.session_state["img_order"].append(str(save_path))
+            save_img_order(post_dir, st.session_state["img_order"])
+            st.success(f"추가됨: {save_path.name}")
+            st.rerun()
+
+        # ── 섹션 4: 업로드 ──
         st.divider()
         st.subheader("4  네이버 블로그 업로드")
-        col_up, col_tip = st.columns([1, 2])
+
+        col_up, col_info = st.columns([1, 2])
+        with col_info:
+            char_cnt = len(st.session_state["edited_content"])
+            img_cnt  = len(st.session_state["img_order"])
+            st.info(
+                f"📄 원고 **{char_cnt:,}자**  |  🖼️ 이미지 **{img_cnt}장**  |  "
+                f"📁 `{post_dir.name}`\n\n"
+                f"업로드 시 현재 편집 내용과 이미지 순서가 자동 저장됩니다."
+            )
         with col_up:
-            if st.button("📤 네이버 블로그에 업로드", type="primary", use_container_width=True):
-                st.info("브라우저가 자동으로 열립니다. 최종 확인 후 [발행] 버튼을 직접 눌러주세요.")
+            if st.button("📤 네이버 블로그에 업로드", type="primary",
+                         use_container_width=True, key="upload_btn"):
+                # 업로드 전 최신 상태 저장
+                (post_dir / "content.txt").write_text(
+                    st.session_state["edited_content"], encoding="utf-8")
+                save_img_order(post_dir, st.session_state["img_order"])
+
+                st.info("브라우저가 자동으로 열립니다. 글 확인 후 [발행] 버튼을 직접 눌러주세요.")
                 try:
                     from step2_upload import upload_to_naver_blog
                     upload_to_naver_blog(folder_path=str(post_dir))
                 except Exception as e:
                     st.error(f"업로드 오류: {e}")
-        with col_tip:
-            st.caption(f"업로드 폴더: `{post_dir}`")
 
 # ─────────────────────────────────────────
 # Tab 2: 이미지 생성

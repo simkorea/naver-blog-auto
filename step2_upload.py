@@ -49,20 +49,36 @@ def get_today_folder():
         print("올바른 번호를 입력해주세요.")
 
 def get_images(folder_path):
-    images = []
+    """이미지 목록 반환. image_order.txt 있으면 그 순서대로."""
     if not os.path.exists(folder_path):
-        return images
-        
-    for file in os.listdir(folder_path):
-        if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
-            images.append(os.path.join(folder_path, file))
-            
-    # 숫자 이름 기준으로 정렬 (1.jpg, 2.jpg ...)
+        return []
+
+    all_imgs = [
+        os.path.join(folder_path, f)
+        for f in os.listdir(folder_path)
+        if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
+    ]
+
+    order_file = os.path.join(folder_path, "image_order.txt")
+    if os.path.exists(order_file):
+        img_map = {os.path.basename(p): p for p in all_imgs}
+        ordered, seen = [], set()
+        with open(order_file, encoding="utf-8") as f:
+            for name in f.read().splitlines():
+                name = name.strip()
+                if name in img_map and name not in seen:
+                    ordered.append(img_map[name])
+                    seen.add(name)
+        for p in all_imgs:
+            if os.path.basename(p) not in seen:
+                ordered.append(p)
+        return ordered
+
     try:
-        images.sort(key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-    except:
-        images.sort()
-    return images
+        all_imgs.sort(key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+    except Exception:
+        all_imgs.sort()
+    return all_imgs
 
 def upload_to_naver_blog(folder_path=None):
     if not NAVER_ID or not NAVER_PW or NAVER_ID == "your_naver_id":
