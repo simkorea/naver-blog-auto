@@ -89,12 +89,24 @@ def get_images(folder_path):
         all_imgs.sort()
     return all_imgs
 
-def upload_to_naver_blog(folder_path=None):
+def _paste_text(page, text: str):
+    """텍스트 붙여넣기 — pyperclip 없으면 JS 클립보드 API 사용."""
+    if PYPERCLIP_OK:
+        pyperclip.copy(text)
+        page.keyboard.press("Control+V")
+    else:
+        try:
+            page.evaluate("(t) => navigator.clipboard.writeText(t)", text)
+            time.sleep(0.05)
+            page.keyboard.press("Control+V")
+        except Exception:
+            page.keyboard.type(text, delay=0)
+    time.sleep(0.3)
+
+
+def upload_to_naver_blog(folder_path=None, headless=False, auto_publish=False):
     if not PLAYWRIGHT_OK:
-        print("[오류] playwright가 설치되지 않았습니다. pip install playwright 후 playwright install 실행하세요.")
-        return
-    if not PYPERCLIP_OK:
-        print("[오류] pyperclip이 설치되지 않았습니다. pip install pyperclip 실행하세요.")
+        print("[오류] playwright가 설치되지 않았습니다. pip install playwright 후 playwright install chromium 실행하세요.")
         return
     if not NAVER_ID or not NAVER_PW or NAVER_ID == "your_naver_id":
         print("[오류] .env 파일에 네이버 계정 정보를 입력해주세요.")
@@ -126,11 +138,22 @@ def upload_to_naver_blog(folder_path=None):
     # 이미지 삽입 주기 계산 (예: 문단 15개, 이미지 5장이면 3문단마다 1장)
     insert_interval = max(1, len(paragraphs) // len(images)) if images else 999
 
-    print("네이버 블로그 에디터 자동화를 시작합니다...")
-    
+    print(f"네이버 블로그 에디터 자동화를 시작합니다... (headless={headless})")
+
+    launch_args = ["--disable-blink-features=AutomationControlled"]
+    if headless:
+        launch_args += ["--no-sandbox", "--disable-dev-shm-usage"]
+    else:
+        launch_args.append("--start-maximized")
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, args=["--start-maximized", "--disable-blink-features=AutomationControlled"])
-        context = browser.new_context(no_viewport=True, permissions=["clipboard-read", "clipboard-write"])
+        browser = p.chromium.launch(headless=headless, args=launch_args)
+        ctx_kwargs = dict(permissions=["clipboard-read", "clipboard-write"])
+        if headless:
+            ctx_kwargs["viewport"] = {"width": 1920, "height": 1080}
+        else:
+            ctx_kwargs["no_viewport"] = True
+        context = browser.new_context(**ctx_kwargs)
         page = context.new_page()
 
         print("[1] 로그인 진행 중...")
@@ -138,22 +161,18 @@ def upload_to_naver_blog(folder_path=None):
         page.wait_for_load_state("networkidle")
 
         page.click("#id")
-        pyperclip.copy(NAVER_ID)
-        page.keyboard.press("Control+V")
-        time.sleep(0.5)
+        _paste_text(page, NAVER_ID)
 
         page.click("#pw")
-        pyperclip.copy(NAVER_PW)
-        page.keyboard.press("Control+V")
-        time.sleep(0.5)
+        _paste_text(page, NAVER_PW)
 
         page.click(".btn_login")
         page.wait_for_timeout(3000)
-        
+
         print("[2] 스마트에디터로 이동 중...")
         page.goto(f"https://blog.naver.com/{NAVER_ID}?Redirect=Write")
         page.wait_for_load_state("networkidle")
-        time.sleep(3) 
+        time.sleep(3)
 
         try:
             iframe = page.frame_locator("#mainFrame")
@@ -162,67 +181,73 @@ def upload_to_naver_blog(folder_path=None):
             # 임시저장 팝업 무시
             try:
                 iframe.locator("button.se-popup-button-cancel").click(timeout=2000)
-            except:
+            except Exception:
                 pass
 
             print("[3] 제목 입력 중...")
             iframe.locator(".se-documentTitle").click()
             time.sleep(0.5)
-            pyperclip.copy(title)
-            page.keyboard.press("Control+V")
+            _paste_text(page, title)
             time.sleep(1)
 
             print("[4] 본문 영역 포커스 이동...")
             try:
                 iframe.locator("span:has-text('나의 일상을 기록해보세요!')").first.click(timeout=3000)
-            except:
+            except Exception:
                 iframe.locator(".se-main-container").click()
-                
             time.sleep(0.5)
 
-            print("[5] 문단과 이미지 교차(Interleave) 업로드 시작...")
+            print("[5] 문단과 이미지 교차 업로드 시작...")
             image_idx = 0
-            
+
             for i, para in enumerate(paragraphs):
-                # 텍스트 붙여넣기
-                pyperclip.copy(para)
-                page.keyboard.press("Control+V")
-                time.sleep(0.5) # 타이핑 적용 대기
-                page.keyboard.press("Enter") # 줄바꿈
-                time.sleep(0.5)
-                
-                # 이미지 삽입 타이밍인지 체크
+                _paste_text(page, para)
+                page.keyboard.press("Enter")
+                time.sleep(0.3)
+
                 if images and image_idx < len(images) and (i + 1) % insert_interval == 0:
                     img_path = os.path.abspath(images[image_idx])
                     print(f"  -> 이미지 업로드 중: {os.path.basename(img_path)}")
-                    
                     try:
-                        # 파일 탐색기 트리거를 기다림
                         with page.expect_file_chooser(timeout=5000) as fc_info:
-                            # 상단 메뉴의 "사진" 버튼 클릭
                             iframe.locator("button.se-image-toolbar-button").first.click()
-                            
-                        file_chooser = fc_info.value
-                        file_chooser.set_files(img_path)
-                        
-                        # 네이버 서버에 이미지가 올라가고 렌더링될 때까지 충분히 대기
-                        time.sleep(4) 
-                        # 이미지 뒤로 커서를 옮기기 위해 엔터 입력
+                        fc_info.value.set_files(img_path)
+                        time.sleep(4)
                         page.keyboard.press("Enter")
                         time.sleep(0.5)
-                        
                         image_idx += 1
                     except Exception as img_e:
                         print(f"  [경고] 이미지 업로드 실패 ({os.path.basename(img_path)}): {img_e}")
 
-            print("\n[성공] 글과 이미지의 교차 업로드가 완료되었습니다! 👏")
-            print("에디터 창에서 최종 확인 후 직접 [발행] 버튼을 눌러주세요.")
-            
-            page.wait_for_timeout(3600000)
+            print("\n[성공] 글과 이미지 업로드 완료!")
+
+            if auto_publish:
+                print("[6] 자동 발행 중...")
+                try:
+                    # 발행 버튼 클릭 (Naver Smart Editor 3.0)
+                    publish_btn = iframe.locator("button:has-text('발행')")
+                    publish_btn.wait_for(state="visible", timeout=10000)
+                    publish_btn.click()
+                    time.sleep(2)
+                    # 발행 확인 팝업에서 확인 버튼 클릭
+                    try:
+                        iframe.locator("button.se-popup-button-publish").click(timeout=5000)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(3000)
+                    print("[발행 완료]")
+                except Exception as pub_e:
+                    print(f"[경고] 자동 발행 실패: {pub_e}\n수동으로 [발행] 버튼을 눌러주세요.")
+                    if not headless:
+                        page.wait_for_timeout(3600000)
+            else:
+                print("에디터 창에서 최종 확인 후 직접 [발행] 버튼을 눌러주세요.")
+                page.wait_for_timeout(3600000)
 
         except Exception as e:
             print(f"\n[오류 발생] 에디터 조작 중 문제 발생: {e}")
-            page.wait_for_timeout(3600000)
+            if not headless:
+                page.wait_for_timeout(3600000)
 
         context.close()
         browser.close()

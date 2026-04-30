@@ -14,9 +14,20 @@ load_dotenv()
 
 # ── 클라우드 / 로컬 감지 ──
 import importlib.util
-PLAYWRIGHT_OK = importlib.util.find_spec("playwright") is not None
 
 IS_CLOUD = not Path(".env").exists()
+
+# 클라우드 환경이면 playwright chromium 브라우저 자동 설치
+if IS_CLOUD and importlib.util.find_spec("playwright") is not None:
+    import subprocess as _sp
+    _cache = Path.home() / ".cache" / "ms-playwright"
+    if not _cache.exists():
+        _sp.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True, timeout=300,
+        )
+
+PLAYWRIGHT_OK = importlib.util.find_spec("playwright") is not None
 
 
 def get_secret(key: str) -> str:
@@ -600,25 +611,29 @@ with tab_editor:
 
         col_up, col_dl = st.columns(2)
 
-        # ▌업로드 버튼 (로컬에서만 활성)
+        # ▌업로드 버튼
         with col_up:
-            if PLAYWRIGHT_OK:
-                if st.button("📤 네이버 블로그에 업로드", type="primary",
-                             use_container_width=True, key="upload_btn"):
-                    (post_dir / "content.txt").write_text(
-                        st.session_state["edited_content"], encoding="utf-8")
-                    save_img_order(post_dir, st.session_state["img_order"])
+            upload_label = "📤 네이버 블로그 업로드 (자동 발행)" if IS_CLOUD else "📤 네이버 블로그에 업로드"
+            if st.button(upload_label, type="primary",
+                         use_container_width=True, key="upload_btn"):
+                (post_dir / "content.txt").write_text(
+                    st.session_state["edited_content"], encoding="utf-8")
+                save_img_order(post_dir, st.session_state["img_order"])
+                if IS_CLOUD:
+                    st.info("☁️ 서버에서 자동 업로드 중입니다. 완료까지 수 분 소요됩니다.")
+                else:
                     st.info("브라우저가 자동으로 열립니다. 글 확인 후 [발행] 버튼을 직접 눌러주세요.")
-                    try:
-                        from step2_upload import upload_to_naver_blog
-                        upload_to_naver_blog(folder_path=str(post_dir))
-                    except Exception as e:
-                        st.error(f"업로드 오류: {e}")
-            else:
-                st.button("📤 네이버 업로드 (로컬 전용)", disabled=True,
-                          use_container_width=True, key="upload_disabled")
-                st.caption("클라우드 환경에서는 업로드를 지원하지 않습니다.\n"
-                           "ZIP을 다운로드한 후 로컬에서 `step2_upload.py`를 실행하세요.")
+                try:
+                    from step2_upload import upload_to_naver_blog
+                    upload_to_naver_blog(
+                        folder_path=str(post_dir),
+                        headless=IS_CLOUD,
+                        auto_publish=IS_CLOUD,
+                    )
+                    if IS_CLOUD:
+                        st.success("✅ 업로드 및 발행 완료!")
+                except Exception as e:
+                    st.error(f"업로드 오류: {e}")
 
         # ▌ZIP 다운로드 (로컬·클라우드 모두 사용 가능)
         with col_dl:
@@ -899,17 +914,24 @@ with tab_posts:
         with meta_col:
             st.markdown(f"📅 **{selected['date']}** &nbsp;|&nbsp; 🖼️ **{len(images)}장** &nbsp;|&nbsp; 📁 `{post_dir.name}`")
         with btn_col:
-            if PLAYWRIGHT_OK:
-                if st.button("📤 네이버 업로드", type="primary", use_container_width=True, key="mgmt_upload"):
+            mgmt_upload_label = "📤 업로드 (자동 발행)" if IS_CLOUD else "📤 네이버 업로드"
+            if st.button(mgmt_upload_label, type="primary",
+                         use_container_width=True, key="mgmt_upload"):
+                if IS_CLOUD:
+                    st.info("☁️ 서버에서 자동 업로드 중입니다.")
+                else:
                     st.info("브라우저가 자동으로 열립니다.")
-                    try:
-                        from step2_upload import upload_to_naver_blog
-                        upload_to_naver_blog(folder_path=str(post_dir))
-                    except Exception as e:
-                        st.error(f"업로드 오류: {e}")
-            else:
-                st.button("📤 업로드 (로컬 전용)", disabled=True,
-                          use_container_width=True, key="mgmt_upload_disabled")
+                try:
+                    from step2_upload import upload_to_naver_blog
+                    upload_to_naver_blog(
+                        folder_path=str(post_dir),
+                        headless=IS_CLOUD,
+                        auto_publish=IS_CLOUD,
+                    )
+                    if IS_CLOUD:
+                        st.success("✅ 업로드 및 발행 완료!")
+                except Exception as e:
+                    st.error(f"업로드 오류: {e}")
 
         st.divider()
 
@@ -945,6 +967,21 @@ with tab_posts:
                 use_container_width=True,
                 key="mgmt_zip",
             )
+
+        # ── 포스트 삭제 ──
+        with st.expander("🗑️ 포스트 삭제", expanded=False):
+            st.warning(f"**'{post_dir.name}'** 포스트 폴더 전체(원고 + 이미지)가 영구 삭제됩니다.")
+            confirm_del = st.checkbox("삭제를 확인합니다", key=f"confirm_del_{sel_idx}")
+            if st.button("🗑️ 포스트 삭제 실행", type="primary",
+                         disabled=not confirm_del, key=f"do_del_{sel_idx}"):
+                import shutil
+                shutil.rmtree(str(post_dir), ignore_errors=True)
+                # 해당 포스트의 세션 키 정리
+                for k in list(st.session_state.keys()):
+                    if f"mgmt_{sel_idx}" in k or f"mgmt_img_order_{sel_idx}" in k:
+                        del st.session_state[k]
+                st.success(f"✅ '{post_dir.name}' 삭제 완료")
+                st.rerun()
 
         # ── 이미지 관리 ──
         mgmt_order_key = f"mgmt_img_order_{sel_idx}"
