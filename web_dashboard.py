@@ -62,6 +62,7 @@ for k, v in {
     "editor_post_key": "",
     "edited_content": "",
     "img_order": [],
+    "last_upload_batch_id": "",
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -430,20 +431,28 @@ with tab_editor:
 
         # 이미지 추가 업로드
         st.write("")
-        added = st.file_uploader(
-            "📎 이미지 직접 추가 (jpg/png/webp)",
+        added_files = st.file_uploader(
+            "📎 이미지 직접 추가 (여러 장 동시 선택 가능)",
             type=["jpg", "jpeg", "png", "webp"],
+            accept_multiple_files=True,
             key="add_img_uploader",
         )
-        if added:
-            existing_nums = [int(Path(p).stem) for p in imgs if Path(p).stem.isdigit()]
-            next_num = max(existing_nums, default=0) + 1
-            save_path = post_dir / f"{next_num}.jpg"
-            save_path.write_bytes(added.getvalue())
-            st.session_state["img_order"].append(str(save_path))
-            save_img_order(post_dir, st.session_state["img_order"])
-            st.success(f"추가됨: {save_path.name}")
-            st.rerun()
+        if added_files:
+            batch_id = "_".join(f"{f.name}_{f.size}" for f in added_files)
+            if st.session_state["last_upload_batch_id"] != batch_id:
+                existing_nums = [int(Path(p).stem) for p in imgs if Path(p).stem.isdigit()]
+                next_num = max(existing_nums, default=0) + 1
+                added_names = []
+                for uf in added_files:
+                    save_path = post_dir / f"{next_num}.jpg"
+                    save_path.write_bytes(uf.getvalue())
+                    st.session_state["img_order"].append(str(save_path))
+                    added_names.append(save_path.name)
+                    next_num += 1
+                save_img_order(post_dir, st.session_state["img_order"])
+                st.session_state["last_upload_batch_id"] = batch_id
+                st.success(f"✅ {len(added_names)}장 추가됨: {', '.join(added_names)}")
+                st.rerun()
 
         # ── 섹션 4: 업로드 ──
         st.divider()
