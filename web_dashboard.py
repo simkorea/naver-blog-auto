@@ -53,6 +53,39 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ══════════════════════════════════════════
+# 로그인 게이트
+# ══════════════════════════════════════════
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"] {display: none;}
+        div[data-testid="stAppViewContainer"] > div:first-child {padding-top: 5rem;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    _, center, _ = st.columns([1, 1, 1])
+    with center:
+        st.markdown("## 🏠 네이버 블로그 자동화")
+        st.markdown("접속하려면 로그인이 필요합니다.")
+        st.write("")
+        with st.form("login_form"):
+            uid = st.text_input("아이디", placeholder="아이디 입력")
+            pw  = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
+            submitted = st.form_submit_button("로그인", use_container_width=True, type="primary")
+        if submitted:
+            if uid == get_secret("APP_USER") and pw == get_secret("APP_PASSWORD"):
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
+    st.stop()
+
 # ── 세션 초기화 ──
 for k, v in {
     "generated_content": "",
@@ -373,6 +406,11 @@ with st.sidebar:
     env = check_env()
     for name, ok in env.items():
         st.markdown(f"{'🟢' if ok else '🔴'} {name}")
+
+    st.divider()
+    if st.button("🔓 로그아웃", use_container_width=True):
+        st.session_state["authenticated"] = False
+        st.rerun()
 
 # ══════════════════════════════════════════
 # 메인 — 탭
