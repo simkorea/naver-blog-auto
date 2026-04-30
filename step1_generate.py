@@ -18,7 +18,7 @@ def read_expert_instruction(filepath="expert_instruction.md"):
     except FileNotFoundError:
         return "전문가 지침서가 없습니다."
 
-def generate_blog_content(choice, input_data):
+def generate_blog_content(choice, input_data, persona=None, extra_instruction=None):
     """
     뉴스/주제를 기반으로 블로그 원고를 생성합니다.
     반환: (news_title, full_ai_text, news_url)
@@ -56,11 +56,14 @@ def generate_blog_content(choice, input_data):
             f"다음 주제에 대해 전문가적 지식을 바탕으로 심층적인 블로그 원고를 작성해주세요: {input_data}"
         )
 
+    persona_block = f"\n<persona>{persona}</persona>" if persona else ""
+    extra_block   = f"\n<extra>{extra_instruction}</extra>" if extra_instruction else ""
+
     prompt = f"""
 오늘의 작성 기반 데이터(또는 기획 주제)입니다.
 <data>
 {data_content}
-</data>
+</data>{persona_block}{extra_block}
 """
     print("\n[2] Gemini API로 5000자 원고 및 15장의 영문 사진 프롬프트를 생성 중입니다... (약 30~60초 소요)")
     model = genai.GenerativeModel(

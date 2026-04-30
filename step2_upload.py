@@ -64,12 +64,13 @@ def get_images(folder_path):
         images.sort()
     return images
 
-def upload_to_naver_blog():
+def upload_to_naver_blog(folder_path=None):
     if not NAVER_ID or not NAVER_PW or NAVER_ID == "your_naver_id":
         print("[오류] .env 파일에 네이버 계정 정보를 입력해주세요.")
         return
 
-    folder_path = get_today_folder()
+    if folder_path is None:
+        folder_path = get_today_folder()
     content_path = os.path.join(folder_path, "content.txt")
     
     if not os.path.exists(content_path):
