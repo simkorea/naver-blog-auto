@@ -91,6 +91,339 @@ st.set_page_config(
 )
 
 # ══════════════════════════════════════════
+# GLOBAL CSS — B2B SaaS 스타일 (Crypee급)
+# ══════════════════════════════════════════
+st.markdown("""
+<style>
+/* ─── 0. Pretendard 웹폰트 ─── */
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
+
+*, *::before, *::after {
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
+               'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif !important;
+}
+
+/* ─── 1. Streamlit 브랜딩 완전 제거 ─── */
+#MainMenu                                    { display: none !important; }
+header[data-testid="stHeader"]               { display: none !important; }
+footer                                       { display: none !important; }
+div[data-testid="stToolbar"]                 { display: none !important; }
+div[data-testid="stBottom"]                  { display: none !important; }
+button[data-testid="baseButton-header"]      { display: none !important; }
+.stDeployButton                              { display: none !important; }
+div[data-testid="stDecoration"]              { display: none !important; }
+
+/* ─── 2. 앱 배경 ─── */
+div[data-testid="stAppViewContainer"] {
+  background: #f0f2f8 !important;
+}
+div[data-testid="block-container"] {
+  padding: 2rem 2.5rem 3rem !important;
+  max-width: 1440px !important;
+}
+
+/* ─── 3. 사이드바 — 다크 네이비 ─── */
+section[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%) !important;
+  border-right: 1px solid rgba(255,255,255,0.06) !important;
+}
+section[data-testid="stSidebar"] > div:first-child {
+  padding-top: 1.5rem !important;
+}
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] div {
+  color: #94a3b8 !important;
+}
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+  color: #f1f5f9 !important;
+}
+section[data-testid="stSidebar"] hr {
+  border-color: rgba(255,255,255,0.1) !important;
+}
+/* 사이드바 라디오 버튼 */
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
+  border-radius: 8px !important;
+  padding: 0.45rem 0.75rem !important;
+  transition: background 0.15s !important;
+  color: #94a3b8 !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover {
+  background: rgba(255,255,255,0.07) !important;
+  color: #e2e8f0 !important;
+}
+
+/* ─── 4. 탭 ─── */
+div[data-testid="stTabs"] > div:first-child {
+  border-bottom: 2px solid #e2e8f0 !important;
+  gap: 2px !important;
+  padding-bottom: 0 !important;
+}
+button[data-baseweb="tab"] {
+  border-radius: 8px 8px 0 0 !important;
+  font-weight: 600 !important;
+  font-size: 0.875rem !important;
+  color: #64748b !important;
+  padding: 0.6rem 1.1rem !important;
+  transition: color 0.2s, background 0.2s !important;
+  border-bottom: 2px solid transparent !important;
+  margin-bottom: -2px !important;
+}
+button[data-baseweb="tab"]:hover {
+  background: #f8fafc !important;
+  color: #7c3aed !important;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+  color: #7c3aed !important;
+  border-bottom: 2px solid #7c3aed !important;
+  font-weight: 700 !important;
+  background: transparent !important;
+}
+div[data-testid="stTabPanel"] {
+  padding-top: 1.5rem !important;
+}
+
+/* ─── 5. 입력 위젯 — 카드 스타일 ─── */
+div[data-testid="stTextInput"] > label,
+div[data-testid="stTextArea"] > label,
+div[data-testid="stSelectbox"] > label,
+div[data-testid="stNumberInput"] > label,
+div[data-testid="stMultiSelect"] > label,
+div[data-testid="stSlider"] > label {
+  font-weight: 600 !important;
+  font-size: 0.825rem !important;
+  color: #374151 !important;
+  letter-spacing: 0.01em !important;
+  margin-bottom: 4px !important;
+}
+div[data-testid="stTextInput"] > div > div,
+div[data-testid="stTextArea"] > div > div,
+div[data-testid="stNumberInput"] > div > div {
+  background: #ffffff !important;
+  border-radius: 10px !important;
+  border: 1.5px solid #e2e8f0 !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05) !important;
+  transition: border-color 0.2s, box-shadow 0.2s !important;
+}
+div[data-testid="stTextInput"] > div > div:focus-within,
+div[data-testid="stTextArea"] > div > div:focus-within,
+div[data-testid="stNumberInput"] > div > div:focus-within {
+  border-color: #7c3aed !important;
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.12) !important;
+}
+div[data-baseweb="select"] > div:first-child {
+  background: #ffffff !important;
+  border-radius: 10px !important;
+  border: 1.5px solid #e2e8f0 !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05) !important;
+}
+input[class], textarea[class] {
+  color: #1e293b !important;
+  font-size: 0.9rem !important;
+}
+
+/* ─── 6. 버튼 — 킬러 스타일 ─── */
+/* Primary 버튼 (그라데이션) */
+div.stButton > button[kind="primary"],
+div.stFormSubmitButton > button[kind="primary"],
+div.stButton > button[data-testid="baseButton-primary"] {
+  background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%) !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 10px !important;
+  font-weight: 700 !important;
+  font-size: 0.9rem !important;
+  padding: 0.65rem 1.5rem !important;
+  box-shadow: 0 4px 15px rgba(124,58,237,0.4) !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  letter-spacing: 0.01em !important;
+}
+div.stButton > button[kind="primary"]:hover,
+div.stFormSubmitButton > button[kind="primary"]:hover,
+div.stButton > button[data-testid="baseButton-primary"]:hover {
+  background: linear-gradient(135deg, #6d28d9 0%, #4338ca 100%) !important;
+  box-shadow: 0 6px 22px rgba(124,58,237,0.5) !important;
+  transform: translateY(-2px) scale(1.01) !important;
+}
+div.stButton > button[kind="primary"]:active,
+div.stFormSubmitButton > button[kind="primary"]:active {
+  transform: translateY(0) scale(0.99) !important;
+  box-shadow: 0 2px 8px rgba(124,58,237,0.3) !important;
+}
+
+/* Secondary 버튼 */
+div.stButton > button[kind="secondary"],
+div.stButton > button[data-testid="baseButton-secondary"],
+div.stButton > button:not([kind]) {
+  background: #ffffff !important;
+  color: #374151 !important;
+  border: 1.5px solid #d1d5db !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  font-size: 0.875rem !important;
+  padding: 0.6rem 1.25rem !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
+  transition: all 0.2s ease !important;
+}
+div.stButton > button[kind="secondary"]:hover,
+div.stButton > button:not([kind]):hover {
+  border-color: #7c3aed !important;
+  color: #7c3aed !important;
+  box-shadow: 0 3px 10px rgba(124,58,237,0.15) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* 다운로드 버튼 — 에메랄드 */
+div.stDownloadButton > button {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 10px !important;
+  font-weight: 700 !important;
+  font-size: 0.875rem !important;
+  box-shadow: 0 4px 12px rgba(16,185,129,0.35) !important;
+  transition: all 0.2s ease !important;
+}
+div.stDownloadButton > button:hover {
+  box-shadow: 0 6px 18px rgba(16,185,129,0.45) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* ─── 7. Expander — 카드 ─── */
+div[data-testid="stExpander"] {
+  background: #ffffff !important;
+  border-radius: 12px !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
+  overflow: hidden !important;
+  margin-bottom: 0.75rem !important;
+}
+div[data-testid="stExpander"] summary {
+  padding: 0.9rem 1.25rem !important;
+  font-weight: 600 !important;
+  font-size: 0.9rem !important;
+  color: #1e293b !important;
+}
+div[data-testid="stExpander"] summary:hover {
+  background: #f8fafc !important;
+}
+
+/* ─── 8. Metric 카드 ─── */
+div[data-testid="metric-container"] {
+  background: #ffffff !important;
+  border-radius: 14px !important;
+  padding: 1.25rem 1.5rem !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
+}
+div[data-testid="stMetricValue"] > div {
+  font-size: 1.8rem !important;
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  letter-spacing: -0.02em !important;
+}
+div[data-testid="stMetricLabel"] > div {
+  font-size: 0.775rem !important;
+  font-weight: 600 !important;
+  color: #64748b !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+}
+div[data-testid="stMetricDelta"] > div {
+  font-size: 0.82rem !important;
+  font-weight: 600 !important;
+}
+
+/* ─── 9. Alert / Info 박스 ─── */
+div[data-testid="stAlert"] {
+  border-radius: 10px !important;
+  border-left-width: 4px !important;
+  font-size: 0.875rem !important;
+}
+
+/* ─── 10. 데이터프레임 ─── */
+div[data-testid="stDataFrame"] {
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+/* ─── 11. 체크박스 / 라디오 ─── */
+div[data-testid="stCheckbox"] label,
+div[data-testid="stRadio"] label {
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  color: #374151 !important;
+}
+
+/* ─── 12. Markdown 헤딩 ─── */
+div[data-testid="stMarkdownContainer"] h1 {
+  font-size: 1.7rem !important;
+  font-weight: 800 !important;
+  color: #0f172a !important;
+  letter-spacing: -0.02em !important;
+}
+div[data-testid="stMarkdownContainer"] h2 {
+  font-size: 1.2rem !important;
+  font-weight: 700 !important;
+  color: #1e293b !important;
+  padding-bottom: 0.4rem !important;
+}
+div[data-testid="stMarkdownContainer"] h3 {
+  font-size: 0.975rem !important;
+  font-weight: 700 !important;
+  color: #374151 !important;
+}
+div[data-testid="stMarkdownContainer"] p {
+  font-size: 0.9rem !important;
+  color: #475569 !important;
+  line-height: 1.7 !important;
+}
+
+/* ─── 13. 로그인 폼 카드 (스페셜) ─── */
+div[data-testid="stForm"] {
+  background: #ffffff !important;
+  border-radius: 16px !important;
+  padding: 2rem !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.1) !important;
+}
+
+/* ─── 14. 커스텀 스크롤바 ─── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ─── 15. 이미지 갤러리 카드 ─── */
+div[data-testid="stImage"] img {
+  border-radius: 10px !important;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1) !important;
+}
+
+/* ─── 16. st.code / st.json 박스 ─── */
+div[data-testid="stCode"],
+div[data-testid="stJson"] {
+  border-radius: 10px !important;
+  border: 1px solid #e2e8f0 !important;
+  overflow: hidden !important;
+}
+
+/* ─── 17. 상태 뱃지 (st.badge) ─── */
+span[data-testid="stBadge"] {
+  border-radius: 20px !important;
+  font-weight: 700 !important;
+  font-size: 0.75rem !important;
+  letter-spacing: 0.03em !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════
 # 로그인 게이트
 # ══════════════════════════════════════════
 if "authenticated" not in st.session_state:
