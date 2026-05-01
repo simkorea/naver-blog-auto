@@ -10,6 +10,32 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
+# ── Google Sheets 헬퍼 ──
+def _gsheets_push(title: str, content: str, tags: str, local_folder: str) -> tuple[bool, str]:
+    creds_json = get_secret("GOOGLE_SERVICE_ACCOUNT_JSON")
+    sheet_id   = get_secret("GOOGLE_SHEET_ID")
+    if not creds_json or not sheet_id:
+        return False, "GOOGLE_SERVICE_ACCOUNT_JSON 또는 GOOGLE_SHEET_ID 가 secrets에 없습니다."
+    try:
+        from google_sheets import push_pending
+        return push_pending(creds_json, sheet_id, title, content, tags, local_folder)
+    except Exception as e:
+        return False, str(e)
+
+def _gsheets_all_rows() -> list[dict]:
+    creds_json = get_secret("GOOGLE_SERVICE_ACCOUNT_JSON")
+    sheet_id   = get_secret("GOOGLE_SHEET_ID")
+    if not creds_json or not sheet_id:
+        return []
+    try:
+        from google_sheets import get_all_rows
+        return get_all_rows(creds_json, sheet_id)
+    except Exception:
+        return []
+
+def _extract_tags(content: str) -> str:
+    return " ".join(re.findall(r"#\S+", content))
+
 load_dotenv()
 
 # ── 클라우드 / 로컬 감지 ──
@@ -609,6 +635,35 @@ with tab_editor:
             f"📄 원고 **{char_cnt:,}자**  |  🖼️ 이미지 **{img_cnt}장**  |  📁 `{post_dir.name}`"
         )
 
+        # ── 최종 포스팅 (Google Sheets 대기열) ──
+        gsheet_ok = bool(get_secret("GOOGLE_SHEET_ID") and get_secret("GOOGLE_SERVICE_ACCOUNT_JSON"))
+        if gsheet_ok:
+            if st.button("📋 최종 포스팅 (발행 대기열 등록)", type="primary",
+                         use_container_width=True, key="final_post_btn"):
+                content_now = st.session_state["edited_content"]
+                paras       = [p.strip() for p in content_now.split("\n\n") if p.strip()]
+                post_title  = paras[0] if paras else post_dir.name
+                tags        = _extract_tags(content_now)
+                # 최신 내용 저장
+                (post_dir / "content.txt").write_text(content_now, encoding="utf-8")
+                save_img_order(post_dir, st.session_state["img_order"])
+
+                with st.spinner("구글 시트에 등록 중..."):
+                    ok, msg = _gsheets_push(post_title, content_now, tags, post_dir.name)
+
+                if ok:
+                    st.success(
+                        f"✅ 발행 대기열에 등록됐습니다! (ID: `{msg}`)  \n"
+                        "로컬 매크로 PC에서 `python local_runner.py` 를 실행하면 자동 업로드됩니다."
+                    )
+                else:
+                    st.error(f"❌ 등록 실패: {msg}")
+        else:
+            st.button("📋 최종 포스팅 (Google Sheets 미설정)", disabled=True,
+                      use_container_width=True, key="final_post_disabled")
+            st.caption("시스템 상태 탭에서 GOOGLE_SHEET_ID / GOOGLE_SERVICE_ACCOUNT_JSON 설정을 확인하세요.")
+
+        st.divider()
         col_up, col_dl = st.columns(2)
 
         # ▌업로드 버튼
@@ -1037,3 +1092,43 @@ with tab_status:
     col_b.metric("오늘 생성", f"{today_cnt}개")
     total_imgs = sum(len(get_images(p["dir"])) for p in posts)
     col_c.metric("전체 수집 이미지", f"{total_imgs}장")
+
+    # ── Google Sheets 발행 대기열 현황 ──
+    st.divider()
+    st.subheader("📋 Google Sheets 발행 대기열")
+
+    gs_ok = bool(get_secret("GOOGLE_SHEET_ID") and get_secret("GOOGLE_SERVICE_ACCOUNT_JSON"))
+    if not gs_ok:
+        st.warning(
+            "Google Sheets 미연결 — Streamlit Cloud Secrets에 아래 두 키를 추가하세요:  \n"
+            "`GOOGLE_SHEET_ID` · `GOOGLE_SERVICE_ACCOUNT_JSON`"
+        )
+    else:
+        if st.button("🔄 대기열 새로고침", key="refresh_queue"):
+            st.rerun()
+
+        with st.spinner("구글 시트 조회 중..."):
+            rows = _gsheets_all_rows()
+
+        if not rows:
+            st.info("등록된 항목이 없습니다.")
+        else:
+            status_colors = {
+                "pending":    "🟡",
+                "processing": "🔵",
+                "done":       "🟢",
+                "error":      "🔴",
+            }
+            import pandas as pd
+            df = pd.DataFrame(rows)[["id","created_at","title","status","error_msg","local_folder"]]
+            df["status"] = df["status"].map(lambda s: f"{status_colors.get(s,'⚪')} {s}")
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            pending_n = sum(1 for r in rows if r.get("status") == "pending")
+            done_n    = sum(1 for r in rows if r.get("status") == "done")
+            error_n   = sum(1 for r in rows if r.get("status") == "error")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("전체",  len(rows))
+            m2.metric("🟡 대기", pending_n)
+            m3.metric("🟢 완료", done_n)
+            m4.metric("🔴 오류", error_n)
