@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>부동산 마케팅 자동화 플랫폼</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+  * { font-family: 'Inter', 'Malgun Gothic', sans-serif; }
+  textarea { resize: none; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #f1f5f9; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  .animate-pulse-once { animation: pulse 0.3s ease-in-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .fade-in { animation: fadeIn 0.25s ease-out; }
+</style>
+</head>
+<body class="bg-slate-50">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useCallback } = React;
+
+/* ─────────────────────────────
+   Minimal SVG Icon System
+───────────────────────────── */
+const Svg = ({ size = 16, className = "", children }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+       className={className}>
+    {children}
+  </svg>
+);
+
+const Icons = {
+  Dashboard:   () => <Svg><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></Svg>,
+  PenLine:     () => <Svg><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></Svg>,
+  Settings:    () => <Svg><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Svg>,
+  Home:        () => <Svg><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></Svg>,
+  Bold:        () => <Svg><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/></Svg>,
+  Italic:      () => <Svg><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></Svg>,
+  AlignLeft:   () => <Svg><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></Svg>,
+  AlignCenter: () => <Svg><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></Svg>,
+  AlignRight:  () => <Svg><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="6" y1="18" x2="21" y2="18"/></Svg>,
+  Table:       () => <Svg><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/></Svg>,
+  Link:        () => <Svg><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></Svg>,
+  List:        () => <Svg><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></Svg>,
+  Image:       () => <Svg><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></Svg>,
+  Palette:     () => <Svg><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></Svg>,
+  CheckCircle: () => <Svg><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></Svg>,
+  Clock:       () => <Svg><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></Svg>,
+  Eye:         () => <Svg><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></Svg>,
+  FileText:    () => <Svg><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></Svg>,
+  Zap:         () => <Svg><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></Svg>,
+  TrendingUp:  () => <Svg><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></Svg>,
+  ChevronRight:() => <Svg><polyline points="9 18 15 12 9 6"/></Svg>,
+  ArrowRight:  () => <Svg><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></Svg>,
+  Send:        () => <Svg><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></Svg>,
+  Sparkles:    () => <Svg><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="M5 3l.75 2.25L8 6l-2.25.75L5 9l-.75-2.25L2 6l2.25-.75z"/><path d="M19 15l.75 2.25L22 18l-2.25.75L19 21l-.75-2.25L16 18l2.25-.75z"/></Svg>,
+  RefreshCw:   () => <Svg><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Svg>,
+  Bell:        () => <Svg><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></Svg>,
+  Search:      () => <Svg><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></Svg>,
+  LogOut:      () => <Svg><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></Svg>,
+  Star:        () => <Svg><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" fill="currentColor" stroke="none"/></Svg>,
+};
+
+/* ─────────────────────────────
+   Sample Data
+───────────────────────────── */
+const POSTS = [
+  { id: 1, title: "신갈 펜타원 현장 브리핑 — 84㎡ 입주 현장 리포트", cat: "현장 브리핑", date: "2026-05-01", views: 1243, status: "done" },
+  { id: 2, title: "GTX-A 노선 개발 호재 분석 — 수혜 단지 총정리", cat: "시장 분석", date: "2026-04-30", views: 892, status: "done" },
+  { id: 3, title: "2026 청약 캘린더 — 5월 주요 단지 일정 정리", cat: "청약 정보", date: "2026-04-29", views: 567, status: "pending" },
+  { id: 4, title: "강남 재건축 규제 완화 — 투자자가 알아야 할 핵심", cat: "규제 분석", date: "2026-04-28", views: 2104, status: "done" },
+  { id: 5, title: "수원 광교 A23블록 분양가 상한제 적용 분석", cat: "분양 분석", date: "2026-04-27", views: 431, status: "pending" },
+  { id: 6, title: "올림픽파크포레온 입주 후기 — 실거주자 인터뷰", cat: "현장 브리핑", date: "2026-04-26", views: 3210, status: "done" },
+];
+
+const PERSONAS = [
+  "신뢰도 높은 전문 브리핑",
+  "친근한 이웃집 스타일",
+  "냉철한 시장 분석가",
+  "감성적인 스토리텔링",
+  "긴박한 분양/급매 뉴스",
+  "심플한 핵심 요약",
+];
+
+const SAMPLE_CONTENT = `신갈 펜타원 현장 브리핑 — 84㎡ 입주 현장 리포트
+
+안녕하세요, 부동산 전문 컨설턴트입니다.
+
+오늘은 경기도 용인시 기흥구 신갈동에 위치한 '펜타원' 아파트 단지를 직접 방문하고 현장 브리핑을 전해드립니다. 최근 GTX-A 개통 이후 수혜 지역으로 주목받으며 시세가 급등하고 있는 이 단지의 실제 현황을 낱낱이 파헤쳐 보겠습니다.
+
+■ 단지 기본 정보
+총 3,094세대 규모의 대단지로, 84㎡ 기준 현재 시세는 7억 5천~8억 2천만 원 사이에 형성되어 있습니다.
+
+■ 현장에서 확인한 강점
+주변 상권이 완성 단계에 접어들었으며, GTX-A 신갈역까지 도보 12분 거리로 교통 접근성이 매우 우수합니다.
+
+더 자세한 현장 브리핑이나 투자 방향이 궁금하시다면 언제든 편하게 문의주세요.`;
+
+/* ─────────────────────────────
+   Main App
+───────────────────────────── */
+export default function App() {
+  const [tab, setTab] = useState("dashboard");
+  const [step, setStep] = useState(1);
+  const [keyword, setKeyword] = useState("");
+  const [persona, setPersona] = useState(PERSONAS[0]);
+  const [content, setContent] = useState(SAMPLE_CONTENT);
+  const [toast, setToast] = useState(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  const showToast = (msg, type = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 2800);
+  };
+
+  const navItems = [
+    { id: "dashboard", label: "대시보드", Icon: Icons.Dashboard },
+    { id: "write",     label: "새 글 쓰기", Icon: Icons.PenLine },
+    { id: "settings",  label: "설  정",    Icon: Icons.Settings },
+  ];
+
+  const pageTitle = tab === "dashboard" ? "발행 히스토리" : tab === "write" ? "새 글 쓰기 마법사" : "설정";
+  const pageDesc  = tab === "dashboard" ? "Supabase DB 연동 · 실시간 발행 현황" : tab === "write" ? "Step-by-step AI 원고 자동 생성" : "API 키 및 환경 설정";
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-slate-50">
+
+      {/* ── Sidebar ── */}
+      <div className={`flex flex-col bg-slate-900 transition-all duration-300 ${sidebarCollapsed ? "w-16" : "w-60"}`}>
+        {/* Logo */}
+        <div className="flex items-center gap-3 px-4 py-5 border-b border-slate-800">
+          <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-900/50">
+            <Icons.Home />
+          </div>
+          {!sidebarCollapsed && (
+            <div className="fade-in min-w-0">
+              <div className="text-white font-bold text-sm leading-tight">부동산 마케팅</div>
+              <div className="text-indigo-400 text-xs">자동화 플랫폼 v2.0</div>
+            </div>
+          )}
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
+          {navItems.map(({ id, label, Icon }) => {
+            const active = tab === id;
+            return (
+              <button key={id} onClick={() => { setTab(id); if (id === "write") setStep(1); }}
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-all duration-150 ${
+                  active
+                    ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/40"
+                    : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                }`}>
+                <span className="flex-shrink-0"><Icon /></span>
+                {!sidebarCollapsed && <span className="fade-in">{label}</span>}
+                {!sidebarCollapsed && active && (
+                  <span className="ml-auto fade-in"><Icons.ChevronRight /></span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Stats mini */}
+        {!sidebarCollapsed && (
+          <div className="mx-3 mb-3 bg-slate-800 rounded-xl p-3 fade-in">
+            <div className="text-xs text-slate-400 mb-2 font-semibold">이번 달 현황</div>
+            <div className="flex justify-between text-center">
+              <div><div className="text-white font-bold">14</div><div className="text-slate-500 text-xs">작성</div></div>
+              <div><div className="text-emerald-400 font-bold">11</div><div className="text-slate-500 text-xs">발행</div></div>
+              <div><div className="text-amber-400 font-bold">3</div><div className="text-slate-500 text-xs">대기</div></div>
+            </div>
+          </div>
+        )}
+
+        {/* User */}
+        <div className="px-3 py-3 border-t border-slate-800">
+          <div className={`flex items-center gap-3 ${sidebarCollapsed ? "justify-center" : ""}`}>
+            <div className="w-8 h-8 bg-gradient-to-br from-indigo-400 to-purple-500 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0">심</div>
+            {!sidebarCollapsed && (
+              <div className="flex-1 min-w-0 fade-in">
+                <div className="text-white text-xs font-semibold truncate">shimskorea</div>
+                <div className="text-slate-500 text-xs">부동산 전문가</div>
+              </div>
+            )}
+            {!sidebarCollapsed && (
+              <button className="text-slate-600 hover:text-slate-300 transition-colors fade-in" onClick={() => showToast("로그아웃되었습니다.")}>
+                <Icons.LogOut />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Main ── */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+        {/* Top bar */}
+        <header className="bg-white border-b border-slate-100 px-7 py-4 flex items-center gap-4">
+          <button onClick={() => setSidebarCollapsed(c => !c)}
+            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500 transition-colors flex-shrink-0">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <div className="flex-1">
+            <h1 className="text-slate-800 font-bold text-base leading-tight">{pageTitle}</h1>
+            <p className="text-slate-400 text-xs mt-0.5">{pageDesc}</p>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+              <Icons.Search />
+              <input placeholder="검색..." className="bg-transparent text-sm text-slate-600 outline-none w-32 placeholder:text-slate-400"/>
+            </div>
+            <button className="relative w-9 h-9 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center hover:bg-slate-100 transition-colors text-slate-500">
+              <Icons.Bell />
+              <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
+            </button>
+          </div>
+        </header>
+
+        {/* Content */}
+        <div className="flex-1 overflow-auto p-7">
+          {tab === "dashboard" && <Dashboard showToast={showToast} />}
+          {tab === "write"     && <WriteWizard step={step} setStep={setStep} keyword={keyword} setKeyword={setKeyword} persona={persona} setPersona={setPersona} content={content} setContent={setContent} showToast={showToast} />}
+          {tab === "settings"  && <SettingsPage showToast={showToast} />}
+        </div>
+      </div>
+
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-xl text-white text-sm font-medium fade-in z-50 ${toast.type === "success" ? "bg-slate-800" : "bg-red-600"}`}>
+          <Icons.CheckCircle />
+          {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────
+   Dashboard
+───────────────────────────── */
+function Dashboard({ showToast }) {
+  const stats = [
+    { label: "전체 포스트",   value: "47",    Icon: Icons.FileText,    color: "text-indigo-600",  bg: "bg-indigo-50",  delta: "+5" },
+    { label: "발행 완료",     value: "39",    Icon: Icons.CheckCircle, color: "text-emerald-600", bg: "bg-emerald-50", delta: "+4" },
+    { label: "발행 대기",     value: "8",     Icon: Icons.Clock,       color: "text-amber-600",   bg: "bg-amber-50",   delta: "+1" },
+    { label: "총 조회수",     value: "18.4K", Icon: Icons.Eye,         color: "text-blue-600",    bg: "bg-blue-50",    delta: "+12.5%" },
+  ];
+
+  return (
+    <div className="space-y-6 fade-in">
+      {/* Stat cards */}
+      <div className="grid grid-cols-4 gap-4">
+        {stats.map(s => (
+          <div key={s.label} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 hover:shadow-md transition-shadow">
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-slate-500 text-sm font-medium">{s.label}</span>
+              <div className={`w-10 h-10 ${s.bg} rounded-xl flex items-center justify-center`}>
+                <span className={s.color}><s.Icon /></span>
+              </div>
+            </div>
+            <div className="text-2xl font-extrabold text-slate-800 tracking-tight">{s.value}</div>
+            <div className="flex items-center gap-1 mt-1.5 text-xs text-emerald-600 font-medium">
+              <Icons.TrendingUp />
+              <span>{s.delta} 이번 달</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Chart bar (decorative) */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h2 className="font-bold text-slate-800">월별 발행 현황</h2>
+            <p className="text-slate-400 text-xs mt-0.5">최근 6개월 · 블로그 포스트 기준</p>
+          </div>
+          <div className="flex gap-4 text-xs">
+            <span className="flex items-center gap-1.5 text-slate-500"><span className="w-2.5 h-2.5 rounded bg-indigo-500 inline-block"></span>발행 완료</span>
+            <span className="flex items-center gap-1.5 text-slate-500"><span className="w-2.5 h-2.5 rounded bg-amber-400 inline-block"></span>발행 대기</span>
+          </div>
+        </div>
+        <div className="flex items-end gap-3 h-28">
+          {[
+            { m:"12월", done:5,  pend:1 },
+            { m:"1월",  done:8,  pend:2 },
+            { m:"2월",  done:6,  pend:3 },
+            { m:"3월",  done:11, pend:2 },
+            { m:"4월",  done:9,  pend:3 },
+            { m:"5월",  done:4,  pend:1 },
+          ].map(({ m, done, pend }) => {
+            const max = 16;
+            return (
+              <div key={m} className="flex-1 flex flex-col items-center gap-1">
+                <div className="w-full flex flex-col gap-0.5" style={{height: "96px", justifyContent: "flex-end"}}>
+                  <div className="w-full bg-amber-400 rounded-t-sm transition-all" style={{height: `${(pend/max)*96}px`}}></div>
+                  <div className="w-full bg-indigo-500 rounded-t-sm transition-all" style={{height: `${(done/max)*96}px`}}></div>
+                </div>
+                <div className="text-xs text-slate-400">{m}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h2 className="font-bold text-slate-800">발행 포스트 목록</h2>
+            <p className="text-xs text-slate-400 mt-0.5">총 {POSTS.length}개 포스트</p>
+          </div>
+          <button onClick={() => showToast("목록을 새로고침했습니다.")}
+            className="flex items-center gap-2 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg font-semibold transition-colors">
+            <Icons.RefreshCw /> 새로고침
+          </button>
+        </div>
+        <table className="w-full">
+          <thead>
+            <tr className="bg-slate-50/70">
+              {["제목", "카테고리", "작성일", "조회수", "상태"].map(h => (
+                <th key={h} className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {POSTS.map(post => (
+              <tr key={post.id} className="hover:bg-slate-50/60 transition-colors group cursor-pointer">
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <span className="text-indigo-400"><Icons.FileText /></span>
+                    </div>
+                    <span className="text-sm font-medium text-slate-700 group-hover:text-indigo-600 transition-colors line-clamp-1 max-w-xs">{post.title}</span>
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  <span className="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-lg font-medium">{post.cat}</span>
+                </td>
+                <td className="px-6 py-4 text-sm text-slate-500 whitespace-nowrap">{post.date}</td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-1.5 text-sm text-slate-600">
+                    <span className="text-slate-400"><Icons.Eye /></span>
+                    {post.views.toLocaleString()}
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  {post.status === "done"
+                    ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full">
+                        <Icons.CheckCircle /> 발행 완료
+                      </span>
+                    : <span className="inline-flex items-center gap-1.5 text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded-full">
+                        <Icons.Clock /> 발행 대기
+                      </span>
+                  }
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────
+   Write Wizard
+───────────────────────────── */
+function WriteWizard({ step, setStep, keyword, setKeyword, persona, setPersona, content, setContent, showToast }) {
+  const steps = [
+    { num: 1, label: "기본 입력",   desc: "키워드 & 페르소나" },
+    { num: 2, label: "리치 에디터", desc: "원고 편집" },
+    { num: 3, label: "최종 발행",   desc: "발행 대기열 등록" },
+  ];
+
+  const [activeFormat, setActiveFormat] = useState([]);
+  const [generating, setGenerating] = useState(false);
+
+  const toggleFmt = f => setActiveFormat(prev =>
+    prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f]
+  );
+
+  const handleGenerate = () => {
+    setGenerating(true);
+    setTimeout(() => { setGenerating(false); setStep(2); showToast("✨ AI 원고 생성 완료!"); }, 1600);
+  };
+
+  const handlePublish = () => {
+    showToast("🚀 발행 대기열에 등록됐습니다! (Supabase post_queue)");
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-5 fade-in">
+
+      {/* Progress Stepper */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+        <div className="flex items-center">
+          {steps.map((s, idx) => {
+            const isDone   = step > s.num;
+            const isActive = step === s.num;
+            return (
+              <div key={s.num} className={`flex items-center ${idx < steps.length - 1 ? "flex-1" : ""}`}>
+                <button onClick={() => setStep(s.num)}
+                  className="flex items-center gap-2.5 group flex-shrink-0">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-200 ${
+                    isDone   ? "bg-indigo-600 text-white shadow-md shadow-indigo-200" :
+                    isActive ? "bg-indigo-600 text-white ring-4 ring-indigo-100 shadow-md shadow-indigo-200" :
+                               "bg-slate-100 text-slate-400 group-hover:bg-slate-200"
+                  }`}>
+                    {isDone ? <Icons.CheckCircle /> : s.num}
+                  </div>
+                  <div className="text-left">
+                    <div className={`text-xs font-bold ${isActive ? "text-indigo-600" : isDone ? "text-slate-700" : "text-slate-400"}`}>{s.label}</div>
+                    <div className="text-xs text-slate-400">{s.desc}</div>
+                  </div>
+                </button>
+                {idx < steps.length - 1 && (
+                  <div className={`flex-1 h-0.5 mx-4 rounded-full transition-all duration-300 ${step > s.num ? "bg-indigo-500" : "bg-slate-200"}`}/>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Step 1 */}
+      {step === 1 && (
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-5 fade-in">
+          <div>
+            <h2 className="text-slate-800 font-bold text-lg">기본 정보 입력</h2>
+            <p className="text-slate-400 text-sm mt-0.5">AI가 원고를 생성하기 위한 핵심 정보를 입력해주세요.</p>
+          </div>
+
+          {/* Keyword */}
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">메인 키워드</label>
+            <div className="flex gap-2">
+              <input value={keyword} onChange={e => setKeyword(e.target.value)}
+                placeholder="예: 신갈 펜타원 분양가, GTX-A 수혜 단지"
+                className="flex-1 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent placeholder:text-slate-300 transition-shadow"/>
+              <button className="flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 px-4 py-3 rounded-xl text-sm font-semibold transition-colors flex-shrink-0">
+                <Icons.Sparkles /> AI 제안
+              </button>
+            </div>
+            {/* Keyword chips */}
+            <div className="flex gap-2 mt-2 flex-wrap">
+              {["GTX-A 수혜", "아파트 청약", "분양가 상한제", "재건축 규제"].map(kw => (
+                <button key={kw} onClick={() => setKeyword(kw)}
+                  className="text-xs bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 px-2.5 py-1 rounded-lg transition-colors">
+                  {kw}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Persona */}
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">페르소나 (작성 어조)</label>
+            <div className="grid grid-cols-2 gap-2">
+              {PERSONAS.map(p => (
+                <button key={p} onClick={() => setPersona(p)}
+                  className={`text-sm text-left px-3.5 py-2.5 rounded-xl border transition-all font-medium ${
+                    persona === p
+                      ? "border-indigo-400 bg-indigo-50 text-indigo-700 shadow-sm"
+                      : "border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                  }`}>
+                  {persona === p && <span className="mr-1.5">✓</span>}{p}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Extra */}
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+              추가 지시사항 <span className="text-slate-400 font-normal">(선택)</span>
+            </label>
+            <textarea rows={3} placeholder="예: 30대 신혼부부 타겟으로 작성, 청약 경쟁률 데이터 반드시 포함"
+              className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder:text-slate-300"/>
+          </div>
+
+          <div className="flex justify-end pt-1">
+            <button onClick={handleGenerate} disabled={generating}
+              className="flex items-center gap-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white px-7 py-3.5 rounded-xl text-sm font-bold transition-colors shadow-lg shadow-indigo-200">
+              {generating
+                ? <><span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span> AI 생성 중...</>
+                : <><Icons.Sparkles /> AI 원고 자동 생성</>
+              }
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 2 */}
+      {step === 2 && (
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden fade-in">
+          {/* Toolbar */}
+          <div className="border-b border-slate-100 bg-slate-50/50 px-3 py-2 flex items-center gap-0.5 flex-wrap">
+            {/* Format group */}
+            {[
+              { f: "bold",   I: Icons.Bold,        label: "굵게" },
+              { f: "italic", I: Icons.Italic,       label: "기울임" },
+            ].map(({ f, I, label }) => (
+              <button key={f} title={label} onClick={() => toggleFmt(f)}
+                className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors text-slate-600 ${activeFormat.includes(f) ? "bg-indigo-100 text-indigo-700" : "hover:bg-slate-200"}`}>
+                <I />
+              </button>
+            ))}
+            <div className="w-px h-5 bg-slate-200 mx-1"/>
+            {[
+              { I: Icons.AlignLeft,   label: "왼쪽 정렬" },
+              { I: Icons.AlignCenter, label: "가운데 정렬" },
+              { I: Icons.AlignRight,  label: "오른쪽 정렬" },
+            ].map(({ I, label }) => (
+              <button key={label} title={label}
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-200 transition-colors text-slate-600">
+                <I />
+              </button>
+            ))}
+            <div className="w-px h-5 bg-slate-200 mx-1"/>
+            {[
+              { I: Icons.Palette, label: "색상" },
+              { I: Icons.Link,    label: "링크 삽입" },
+              { I: Icons.List,    label: "목록" },
+              { I: Icons.Table,   label: "표 삽입" },
+              { I: Icons.Image,   label: "이미지 삽입" },
+            ].map(({ I, label }) => (
+              <button key={label} title={label}
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-200 transition-colors text-slate-600">
+                <I />
+              </button>
+            ))}
+            {/* Char count */}
+            <div className="ml-auto flex items-center gap-2 pr-1">
+              <span className="text-xs text-slate-400">{content.length.toLocaleString()}자</span>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${content.length >= 3000 ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>
+                {content.length >= 3000 ? "✓ 충분" : `목표 3,000자`}
+              </span>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="h-0.5 bg-slate-100">
+            <div className="h-full bg-indigo-500 transition-all duration-500"
+              style={{width: `${Math.min(100, (content.length / 5000) * 100)}%`}}/>
+          </div>
+
+          {/* Editor */}
+          <textarea value={content} onChange={e => setContent(e.target.value)}
+            className="w-full px-6 py-5 text-sm text-slate-700 leading-loose focus:outline-none bg-white"
+            rows={16}
+            style={{fontFamily: "'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif", lineHeight: "1.9"}}/>
+
+          {/* Utility bar */}
+          <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-2.5 flex items-center gap-2 flex-wrap">
+            {[
+              { I: Icons.CheckCircle, label: "맞춤법 교정" },
+              { I: Icons.Zap,         label: "스마트 줄바꿈" },
+              { I: Icons.Sparkles,    label: "AI 문장 보완" },
+              { I: Icons.RefreshCw,   label: "전체 재생성" },
+            ].map(({ I, label }) => (
+              <button key={label} onClick={() => showToast(`${label} 완료`)}
+                className="flex items-center gap-1.5 text-xs text-slate-600 bg-white border border-slate-200 hover:border-indigo-300 hover:text-indigo-600 px-3 py-1.5 rounded-lg transition-colors font-medium">
+                <I /> {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Nav */}
+          <div className="flex justify-between items-center px-6 py-4 border-t border-slate-100">
+            <button onClick={() => setStep(1)}
+              className="flex items-center gap-1.5 text-slate-500 hover:text-slate-700 text-sm font-medium transition-colors">
+              ← 이전
+            </button>
+            <button onClick={() => setStep(3)}
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl text-sm font-bold transition-colors shadow-md shadow-indigo-200">
+              다음 단계 <Icons.ArrowRight />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3 */}
+      {step === 3 && (
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-5 fade-in">
+          <div>
+            <h2 className="text-slate-800 font-bold text-lg">최종 발행 확인</h2>
+            <p className="text-slate-400 text-sm mt-0.5">아래 내용을 최종 확인 후 발행 대기열에 등록하세요.</p>
+          </div>
+
+          {/* Summary card */}
+          <div className="bg-gradient-to-br from-slate-50 to-indigo-50/30 rounded-xl border border-slate-200 p-5 space-y-3">
+            {[
+              ["키워드",   keyword || "(미입력)", false],
+              ["페르소나", persona, false],
+              ["원고 분량", `${content.length.toLocaleString()}자`, content.length >= 3000],
+              ["발행 채널", "네이버 블로그 (shimskorea)", false],
+            ].map(([k, v, highlight]) => (
+              <div key={k} className="flex items-center justify-between text-sm">
+                <span className="text-slate-500">{k}</span>
+                <span className={`font-semibold ${highlight ? "text-emerald-600" : "text-slate-700"}`}>{v}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Pipeline */}
+          <div className="border border-slate-200 rounded-xl p-4 space-y-2.5">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">발행 파이프라인</div>
+            {[
+              "Supabase DB (post_queue 테이블) 에 저장",
+              "로컬 PC Watcher 가 자동 감지",
+              "네이버 블로그 Playwright 자동 업로드",
+              "완료 시 status → done 업데이트",
+            ].map((step, i) => (
+              <div key={i} className="flex items-center gap-2.5 text-sm text-slate-600">
+                <div className="w-5 h-5 bg-emerald-50 border border-emerald-200 rounded-full flex items-center justify-center flex-shrink-0">
+                  <span className="text-emerald-500"><Icons.CheckCircle /></span>
+                </div>
+                <span>{step}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Tags */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">자동 추출 태그</label>
+            <div className="flex gap-2 flex-wrap">
+              {["#부동산", "#아파트분양", "#청약정보", "#GTX", "#수도권부동산"].map(tag => (
+                <span key={tag} className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2.5 py-1 rounded-lg font-medium">{tag}</span>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <button onClick={() => setStep(2)}
+              className="text-slate-500 hover:text-slate-700 text-sm font-medium transition-colors">
+              ← 수정하기
+            </button>
+            <button onClick={handlePublish}
+              className="flex items-center gap-3 bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-2xl text-sm font-bold transition-all shadow-xl shadow-indigo-200 hover:shadow-indigo-300 hover:scale-105 duration-150 group">
+              <Icons.Send />
+              최종 포스팅 — 발행 대기열 등록
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────
+   Settings
+───────────────────────────── */
+function SettingsPage({ showToast }) {
+  const fields = [
+    { label: "Gemini API Key",    type: "password", placeholder: "AIza..." },
+    { label: "Leonardo API Key",  type: "password", placeholder: "xxxxxxxx-xxxx..." },
+    { label: "Naver ID",          type: "text",     placeholder: "네이버 아이디" },
+    { label: "Naver Password",    type: "password", placeholder: "••••••••" },
+    { label: "Supabase URL",      type: "text",     placeholder: "https://xxxxx.supabase.co" },
+    { label: "Supabase Anon Key", type: "password", placeholder: "eyJhbGci..." },
+  ];
+
+  return (
+    <div className="max-w-xl space-y-5 fade-in">
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+        <h2 className="font-bold text-slate-800 mb-1">API 키 설정</h2>
+        <p className="text-slate-400 text-xs mb-5">변경 사항은 .env 파일 및 Streamlit Secrets에 반영됩니다.</p>
+        <div className="space-y-4">
+          {fields.map(f => (
+            <div key={f.label}>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">{f.label}</label>
+              <input type={f.type} placeholder={f.placeholder} defaultValue={f.type === "password" ? "••••••••••••" : ""}
+                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"/>
+            </div>
+          ))}
+        </div>
+        <button onClick={() => showToast("설정이 저장됐습니다.")}
+          className="mt-6 flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-sm font-semibold transition-colors shadow-md shadow-indigo-200">
+          <Icons.CheckCircle /> 변경 사항 저장
+        </button>
+      </div>
+
+      {/* API Status */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+        <h2 className="font-bold text-slate-800 mb-4">API 연결 상태</h2>
+        <div className="space-y-3">
+          {[
+            { label: "Gemini API",    ok: true },
+            { label: "Leonardo API",  ok: true },
+            { label: "Naver Account", ok: true },
+            { label: "Supabase DB",   ok: true },
+            { label: "Playwright",    ok: true },
+          ].map(({ label, ok }) => (
+            <div key={label} className="flex items-center justify-between">
+              <span className="text-sm text-slate-600">{label}</span>
+              <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${ok ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                {ok ? <Icons.CheckCircle /> : "✕"}
+                {ok ? "연결됨" : "오류"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
