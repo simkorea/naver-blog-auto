@@ -248,6 +248,9 @@ def upload_to_naver_blog(folder_path=None, headless=False, auto_publish=False):
             print(f"\n[오류 발생] 에디터 조작 중 문제 발생: {e}")
             if not headless:
                 page.wait_for_timeout(3600000)
+            context.close()
+            browser.close()
+            raise RuntimeError(f"네이버 에디터 조작 실패: {e}") from e
 
         context.close()
         browser.close()

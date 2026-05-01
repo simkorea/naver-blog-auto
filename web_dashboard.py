@@ -1186,49 +1186,75 @@ with tab_editor:
             st.caption("시스템 상태 탭에서 SUPABASE_URL / SUPABASE_KEY 설정을 확인하세요.")
 
         st.divider()
-        col_up, col_dl = st.columns(2)
 
-        # ▌업로드 버튼
-        with col_up:
-            upload_label = "📤 네이버 블로그 업로드 (자동 발행)" if IS_CLOUD else "📤 네이버 블로그에 업로드"
-            if st.button(upload_label, type="primary",
-                         use_container_width=True, key="upload_btn"):
-                (post_dir / "content.txt").write_text(
-                    st.session_state["edited_content"], encoding="utf-8")
-                save_img_order(post_dir, st.session_state["img_order"])
-                if IS_CLOUD:
-                    st.info("☁️ 서버에서 자동 업로드 중입니다. 완료까지 수 분 소요됩니다.")
-                else:
+        if IS_CLOUD:
+            # ── 클라우드: 직접 업로드 불가 안내 ──────────────────────────────
+            st.markdown("""
+<div style="background:#fef3c7; border:1.5px solid #f59e0b; border-radius:12px;
+            padding:1.1rem 1.4rem; margin-bottom:1rem;">
+  <p style="margin:0 0 0.5rem; font-weight:700; color:#92400e; font-size:0.95rem;">
+    ⚠️ 클라우드 환경에서는 직접 업로드가 불가합니다
+  </p>
+  <p style="margin:0; color:#78350f; font-size:0.875rem; line-height:1.65;">
+    네이버는 클라우드 서버 IP + 헤드리스 브라우저를 <strong>봇으로 감지하여 로그인을 차단</strong>합니다.<br>
+    위의 <strong>📋 발행 대기열 등록</strong> 버튼으로 Supabase에 저장한 뒤,<br>
+    로컬 PC에서 <code>python watcher.py</code> 를 실행하면 자동으로 네이버에 업로드됩니다.
+  </p>
+</div>
+            """, unsafe_allow_html=True)
+            col_save_c, col_dl_c = st.columns(2)
+            with col_save_c:
+                if st.button("💾 최신 상태 저장", use_container_width=True, key="save_before_zip"):
+                    (post_dir / "content.txt").write_text(
+                        st.session_state["edited_content"], encoding="utf-8")
+                    save_img_order(post_dir, st.session_state["img_order"])
+                    st.toast("저장됐습니다 ✅")
+            with col_dl_c:
+                zip_bytes = make_zip(post_dir)
+                st.download_button(
+                    label="📦 포스트 ZIP 다운로드",
+                    data=zip_bytes,
+                    file_name=f"{post_dir.name}.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                    key="zip_download",
+                )
+        else:
+            # ── 로컬 PC: 직접 Playwright 업로드 ─────────────────────────────
+            col_up, col_dl = st.columns(2)
+            with col_up:
+                if st.button("📤 네이버 블로그에 업로드", type="primary",
+                             use_container_width=True, key="upload_btn"):
+                    (post_dir / "content.txt").write_text(
+                        st.session_state["edited_content"], encoding="utf-8")
+                    save_img_order(post_dir, st.session_state["img_order"])
                     st.info("브라우저가 자동으로 열립니다. 글 확인 후 [발행] 버튼을 직접 눌러주세요.")
-                try:
-                    from step2_upload import upload_to_naver_blog
-                    upload_to_naver_blog(
-                        folder_path=str(post_dir),
-                        headless=IS_CLOUD,
-                        auto_publish=IS_CLOUD,
-                    )
-                    if IS_CLOUD:
-                        st.success("✅ 업로드 및 발행 완료!")
-                except Exception as e:
-                    st.error(f"업로드 오류: {e}")
+                    try:
+                        from step2_upload import upload_to_naver_blog
+                        upload_to_naver_blog(
+                            folder_path=str(post_dir),
+                            headless=False,
+                            auto_publish=False,
+                        )
+                    except Exception as e:
+                        st.error(f"업로드 오류: {e}")
 
-        # ▌ZIP 다운로드 (로컬·클라우드 모두 사용 가능)
-        with col_dl:
-            if st.button("💾 최신 상태 저장", use_container_width=True, key="save_before_zip"):
-                (post_dir / "content.txt").write_text(
-                    st.session_state["edited_content"], encoding="utf-8")
-                save_img_order(post_dir, st.session_state["img_order"])
-                st.toast("저장됐습니다 ✅")
+            with col_dl:
+                if st.button("💾 최신 상태 저장", use_container_width=True, key="save_before_zip"):
+                    (post_dir / "content.txt").write_text(
+                        st.session_state["edited_content"], encoding="utf-8")
+                    save_img_order(post_dir, st.session_state["img_order"])
+                    st.toast("저장됐습니다 ✅")
 
-            zip_bytes = make_zip(post_dir)
-            st.download_button(
-                label="📦 포스트 ZIP 다운로드",
-                data=zip_bytes,
-                file_name=f"{post_dir.name}.zip",
-                mime="application/zip",
-                use_container_width=True,
-                key="zip_download",
-            )
+                zip_bytes = make_zip(post_dir)
+                st.download_button(
+                    label="📦 포스트 ZIP 다운로드",
+                    data=zip_bytes,
+                    file_name=f"{post_dir.name}.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                    key="zip_download",
+                )
 
 # ─────────────────────────────────────────
 # Tab 2: 이미지 생성 / 수집
@@ -1616,24 +1642,24 @@ with tab_posts:
         with meta_col:
             st.markdown(f"📅 **{selected['date']}** &nbsp;|&nbsp; 🖼️ **{len(images)}장** &nbsp;|&nbsp; 📁 `{post_dir.name}`")
         with btn_col:
-            mgmt_upload_label = "📤 업로드 (자동 발행)" if IS_CLOUD else "📤 네이버 업로드"
-            if st.button(mgmt_upload_label, type="primary",
-                         use_container_width=True, key="mgmt_upload"):
-                if IS_CLOUD:
-                    st.info("☁️ 서버에서 자동 업로드 중입니다.")
-                else:
+            if IS_CLOUD:
+                # 클라우드: 네이버 봇 차단 → 버튼 비활성화
+                st.button("📤 로컬 PC 전용", disabled=True,
+                          use_container_width=True, key="mgmt_upload_disabled")
+                st.caption("원고 에디터 탭의 **대기열 등록** 을 이용하세요")
+            else:
+                if st.button("📤 네이버 업로드", type="primary",
+                             use_container_width=True, key="mgmt_upload"):
                     st.info("브라우저가 자동으로 열립니다.")
-                try:
-                    from step2_upload import upload_to_naver_blog
-                    upload_to_naver_blog(
-                        folder_path=str(post_dir),
-                        headless=IS_CLOUD,
-                        auto_publish=IS_CLOUD,
-                    )
-                    if IS_CLOUD:
-                        st.success("✅ 업로드 및 발행 완료!")
-                except Exception as e:
-                    st.error(f"업로드 오류: {e}")
+                    try:
+                        from step2_upload import upload_to_naver_blog
+                        upload_to_naver_blog(
+                            folder_path=str(post_dir),
+                            headless=False,
+                            auto_publish=False,
+                        )
+                    except Exception as e:
+                        st.error(f"업로드 오류: {e}")
 
         st.divider()
 
