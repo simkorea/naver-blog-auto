@@ -204,6 +204,36 @@ def check_env():
     }
 
 
+def _auto_generate_prompts(content: str, gemini_key: str) -> list[str]:
+    """원고 본문에서 Gemini로 이미지 프롬프트 5개를 자동 생성합니다."""
+    if gemini_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            excerpt = content[:2000]
+            resp = model.generate_content(
+                "다음 부동산 블로그 원고를 읽고, Leonardo AI 이미지 생성에 사용할 프롬프트를 영어로 5개 작성해주세요.\n"
+                "각 프롬프트는 구체적인 장면 묘사(장소·조명·분위기 포함)여야 합니다.\n"
+                "번호·기호 없이 한 줄에 하나씩만 출력하세요.\n\n"
+                f"원고:\n{excerpt}"
+            )
+            lines = [l.strip() for l in resp.text.splitlines() if l.strip() and len(l.strip()) > 15]
+            if lines:
+                return lines[:7]
+        except Exception:
+            pass
+
+    # Gemini 미설정 또는 실패 시 기본 부동산 프롬프트
+    return [
+        "Modern Korean luxury apartment complex, aerial view, blue sky, photorealistic 8K",
+        "Korean apartment living room interior, minimalist design, natural sunlight",
+        "Seoul cityscape with high-rise apartments, golden hour, dramatic sky",
+        "New apartment construction site, crane, modern architecture, daytime",
+        "Korean real estate model house, premium furniture, bright clean interior",
+    ]
+
+
 def render_image_manager(post_dir: Path, order_key: str, prefix: str):
     """이미지 관리 UI: 체크박스 일괄 작업 + 개별 ↑↓🗑 + 파일 추가."""
 
@@ -709,137 +739,274 @@ with tab_editor:
             )
 
 # ─────────────────────────────────────────
-# Tab 2: 이미지 생성
+# Tab 2: 이미지 생성 / 수집
 # ─────────────────────────────────────────
 with tab_image:
     leo_key = get_secret("LEONARDO_API_KEY")
 
-    if not leo_key:
-        st.error("❌ .env 파일에 LEONARDO_API_KEY가 없습니다.")
-    else:
-        gen_mode = st.radio(
-            "생성 방식",
-            ["📄 원고 프롬프트 기반 생성", "🖼️ 업로드 이미지 기반 생성"],
-            horizontal=True,
-        )
-        st.divider()
+    gen_mode = st.radio(
+        "방식 선택",
+        ["🤖 AI 이미지 생성 (Leonardo)", "📰 뉴스·URL에서 이미지 수집", "🖼️ 업로드 이미지 기반 생성"],
+        horizontal=True,
+    )
+    st.divider()
 
-        # ── 모드 1: 원고 프롬프트 기반 ──
-        if gen_mode == "📄 원고 프롬프트 기반 생성":
-            st.markdown("생성된 포스트의 프롬프트를 선택·편집하여 이미지를 (재)생성합니다.")
-
-            posts = get_all_posts()
-            if not posts:
-                st.info("먼저 '원고 에디터' 탭에서 포스트를 생성해주세요.")
+    # ══ 모드 1: AI 이미지 생성 ══
+    if gen_mode == "🤖 AI 이미지 생성 (Leonardo)":
+            if not leo_key:
+                st.error("❌ LEONARDO_API_KEY가 없습니다. .env 파일 또는 Streamlit Secrets에 추가하세요.")
             else:
-                labels  = [f"[{p['date']}]  {p['title']}" for p in posts]
-                sel_idx = st.selectbox("포스트 선택", range(len(posts)),
-                                       format_func=lambda i: labels[i], key="img_post_sel")
-                post_dir     = posts[sel_idx]["dir"]
-                prompts_file = post_dir / "prompts.txt"
-
-                if not prompts_file.exists():
-                    st.warning("이 포스트에 prompts.txt 파일이 없습니다.")
+                posts = get_all_posts()
+                if not posts:
+                    st.info("먼저 '원고 에디터' 탭에서 포스트를 생성해주세요.")
                 else:
-                    raw_prompts  = prompts_file.read_text(encoding="utf-8")
-                    prompt_lines = [l.strip() for l in raw_prompts.splitlines() if l.strip()]
+                    col_sel, col_cnt, col_over = st.columns([3, 1, 1])
+                    with col_sel:
+                        labels  = [f"[{p['date']}]  {p['title']}" for p in posts]
+                        sel_idx = st.selectbox("포스트 선택", range(len(posts)),
+                                               format_func=lambda i: labels[i], key="img_post_sel")
+                    with col_cnt:
+                        num_per_prompt = st.number_input("장 수 (프롬프트당)", min_value=1, max_value=4, value=1,
+                                                          help="프롬프트 1개당 생성할 이미지 수")
+                    with col_over:
+                        overwrite = st.checkbox("기존 덮어쓰기", value=False)
 
-                    st.write(f"**총 {len(prompt_lines)}개 프롬프트** — 생성할 항목 선택 후 버튼 클릭")
+                    post_dir     = posts[sel_idx]["dir"]
+                    prompts_file = post_dir / "prompts.txt"
 
-                    selected = []
-                    for idx, line in enumerate(prompt_lines):
-                        num_match = re.match(r"^(\d+)[\.\)]\s*", line)
-                        slot_num  = int(num_match.group(1)) if num_match else (idx + 1)
-                        clean     = re.sub(r"^\d+[\.\)]\s*", "", line).strip()
+                    # 기존 prompts.txt 내용 로드 (없으면 빈 문자열)
+                    default_prompts = prompts_file.read_text(encoding="utf-8").strip() \
+                                      if prompts_file.exists() else ""
 
-                        existing = post_dir / f"{slot_num}.jpg"
-                        badge    = "✅" if existing.exists() else "🔲"
+                    prompt_key = f"img_prompts_{sel_idx}"
+                    if prompt_key not in st.session_state:
+                        st.session_state[prompt_key] = default_prompts
 
-                        col_chk, col_badge, col_txt = st.columns([1, 1, 14])
-                        with col_chk:
-                            checked = st.checkbox("", value=not existing.exists(),
-                                                  key=f"chk_{sel_idx}_{idx}")
-                        with col_badge:
-                            st.write(badge)
-                        with col_txt:
-                            edited = st.text_input(
-                                f"slot_{slot_num}",
-                                value=clean,
-                                key=f"prompt_{sel_idx}_{idx}",
-                                label_visibility="collapsed",
-                            )
-                        if checked:
-                            selected.append((slot_num, edited))
+                    # 자동 추출 / 초기화 버튼
+                    col_auto, col_reset = st.columns([1, 1])
+                    with col_auto:
+                        if st.button("🤖 원고에서 자동 추출 (Gemini)", use_container_width=True,
+                                     key="auto_prompts_btn"):
+                            content_file = post_dir / "content.txt"
+                            if content_file.exists():
+                                with st.spinner("Gemini로 이미지 프롬프트 생성 중..."):
+                                    auto_p = _auto_generate_prompts(
+                                        content_file.read_text(encoding="utf-8"),
+                                        get_secret("GEMINI_API_KEY"),
+                                    )
+                                    st.session_state[prompt_key] = "\n".join(auto_p)
+                                st.rerun()
+                            else:
+                                st.warning("content.txt 파일이 없습니다.")
+                    with col_reset:
+                        if st.button("↩ 원래대로", use_container_width=True, key="reset_prompts_btn"):
+                            st.session_state[prompt_key] = default_prompts
+                            st.rerun()
 
-                    overwrite = st.checkbox("✅ 기존 이미지 덮어쓰기", value=False)
+                    # 프롬프트 편집 텍스트 영역 (한 줄 = 이미지 1장)
+                    st.markdown("**프롬프트 목록** — 한 줄에 하나씩 입력하세요 (한국어/영어 모두 가능)")
+                    prompt_text = st.text_area(
+                        "prompts",
+                        value=st.session_state[prompt_key],
+                        height=210,
+                        label_visibility="collapsed",
+                        placeholder="예시:\nModern Korean luxury apartment complex, aerial view, golden hour lighting, photorealistic\n서울 강남 아파트 단지 야경, 도심 뷰\nKorean apartment interior, minimalist living room, natural sunlight",
+                        key=f"prompt_area_{sel_idx}",
+                    )
+                    st.session_state[prompt_key] = prompt_text
+
+                    col_save_p, col_spacer = st.columns([1, 3])
+                    with col_save_p:
+                        if st.button("💾 프롬프트 저장", use_container_width=True, key="save_prompts_btn"):
+                            prompts_file.write_text(prompt_text, encoding="utf-8")
+                            st.toast("프롬프트 저장됐습니다 ✅")
+
+                    prompt_lines = [l.strip() for l in prompt_text.splitlines() if l.strip()]
+                    total_imgs   = len(prompt_lines) * int(num_per_prompt)
 
                     col_btn, col_info = st.columns([1, 2])
                     with col_btn:
                         gen_btn = st.button(
-                            f"🚀  {len(selected)}개 이미지 생성",
+                            f"🚀 이미지 생성 ({total_imgs}장)",
                             type="primary",
-                            disabled=(len(selected) == 0),
+                            disabled=(len(prompt_lines) == 0),
                             use_container_width=True,
+                            key="leo_gen_btn",
                         )
                     with col_info:
-                        st.info(f"이미지 1장당 약 30~60초 소요 · 총 {len(selected)}장")
+                        st.info(f"프롬프트 **{len(prompt_lines)}개** × **{int(num_per_prompt)}장** = 총 **{total_imgs}장**  ·  장당 약 30~60초")
 
-                    if gen_btn and selected:
-                        from leonardo_generator import (
-                            generate_text_to_image, poll_until_complete, download_image
-                        )
+                    if gen_btn and prompt_lines:
+                        from leonardo_generator import generate_text_to_image, poll_until_complete, download_image
 
                         progress_bar = st.progress(0)
                         status_txt   = st.empty()
-                        gallery      = st.empty()
-                        done_paths   = []
+                        done_paths: list = []
 
-                        for count, (slot, prompt) in enumerate(selected):
-                            save_path = post_dir / f"{slot}.jpg"
+                        # 기존 이미지 번호 다음부터 슬롯 배정
+                        existing_nums = [int(f.stem) for f in post_dir.iterdir()
+                                         if f.is_file() and f.stem.isdigit()
+                                         and f.suffix.lower() in (".jpg", ".png", ".jpeg", ".webp")]
+                        next_slot = max(existing_nums, default=0) + 1
 
-                            if save_path.exists() and not overwrite:
-                                status_txt.info(f"[{count+1}/{len(selected)}] {slot}.jpg 이미 존재 — 건너뜀")
-                                done_paths.append(save_path)
-                                progress_bar.progress((count + 1) / len(selected))
-                                continue
+                        for count, raw_line in enumerate(prompt_lines):
+                            # "N. prompt" 형식이면 N을 슬롯으로, 아니면 순서대로
+                            num_match = re.match(r"^(\d+)[\.\)]\s*", raw_line)
+                            if num_match:
+                                slot = int(num_match.group(1))
+                                clean_prompt = re.sub(r"^\d+[\.\)]\s*", "", raw_line).strip()
+                            else:
+                                slot = next_slot + count
+                                clean_prompt = raw_line
 
-                            status_txt.write(f"⏳ [{count+1}/{len(selected)}] 슬롯 {slot} 생성 요청 중...")
+                            status_txt.write(f"⏳ [{count+1}/{len(prompt_lines)}] 슬롯 {slot} 생성 중...")
 
                             try:
-                                gen_id = generate_text_to_image(prompt, leo_key)
-
+                                gen_id = generate_text_to_image(
+                                    clean_prompt, leo_key, num_images=int(num_per_prompt)
+                                )
                                 tick_txt = st.empty()
-                                def on_tick(elapsed, _t=tick_txt, _c=count, _n=len(selected), _s=slot):
+                                def on_tick(elapsed, _t=tick_txt, _s=slot):
                                     _t.caption(f"  대기 중... {elapsed}초 경과 (슬롯 {_s})")
-
                                 urls = poll_until_complete(gen_id, leo_key, on_tick=on_tick)
                                 tick_txt.empty()
 
-                                if urls and download_image(urls[0], str(save_path)):
-                                    done_paths.append(save_path)
-                                    status_txt.success(f"✅ [{count+1}/{len(selected)}] {slot}.jpg 저장 완료")
+                                if urls:
+                                    for i, url in enumerate(urls):
+                                        fname = f"{slot}.jpg" if len(urls) == 1 else f"{slot}_{i+1}.jpg"
+                                        sp = post_dir / fname
+                                        if not sp.exists() or overwrite:
+                                            if download_image(url, str(sp)):
+                                                done_paths.append(sp)
+                                    status_txt.success(f"✅ [{count+1}/{len(prompt_lines)}] {len(urls)}장 저장")
                                 else:
-                                    status_txt.warning(f"⚠ [{count+1}/{len(selected)}] 슬롯 {slot} 생성 실패")
-
+                                    status_txt.warning(f"⚠ [{count+1}/{len(prompt_lines)}] 슬롯 {slot} 실패")
                             except Exception as e:
                                 status_txt.error(f"[{count+1}] 오류: {e}")
 
-                            progress_bar.progress((count + 1) / len(selected))
+                            progress_bar.progress((count + 1) / len(prompt_lines))
 
-                        # 완료 후 갤러리 표시
                         status_txt.success(f"🎉 완료! {len(done_paths)}장 저장됨 → {post_dir}")
-                        if done_paths:
-                            cols = st.columns(5)
-                            for i, p in enumerate(done_paths):
-                                with cols[i % 5]:
-                                    st.image(str(p), caption=p.name, use_container_width=True)
+                        st.session_state[f"leo_gallery_{sel_idx}"] = [str(p) for p in done_paths]
+                        st.rerun()
 
-        # ── 모드 2: 업로드 이미지 기반 ──
+                    # ── 생성된 이미지 갤러리 (삭제 버튼 포함) ──
+                    gallery_key = f"leo_gallery_{sel_idx}"
+                    if gallery_key in st.session_state and st.session_state[gallery_key]:
+                        valid = [p for p in st.session_state[gallery_key] if Path(p).exists()]
+                        if valid:
+                            st.divider()
+                            st.markdown(f"**방금 생성된 이미지 ({len(valid)}장)**  —  🗑 버튼으로 개별 삭제")
+                            GCOLS = 5
+                            for row_s in range(0, len(valid), GCOLS):
+                                row_imgs = valid[row_s:row_s + GCOLS]
+                                cols = st.columns(GCOLS)
+                                for j, img_path in enumerate(row_imgs):
+                                    with cols[j]:
+                                        try:
+                                            st.image(img_path, use_container_width=True)
+                                        except Exception:
+                                            st.write("⚠")
+                                        st.caption(Path(img_path).name)
+                                        if st.button("🗑", key=f"del_g_{row_s+j}",
+                                                     use_container_width=True):
+                                            Path(img_path).unlink(missing_ok=True)
+                                            st.session_state[gallery_key].remove(img_path)
+                                            st.rerun()
+
+    # ══ 모드 2: 뉴스·URL에서 이미지 수집 ══
+    elif gen_mode == "📰 뉴스·URL에서 이미지 수집":
+        st.markdown("뉴스 기사 URL 또는 키워드로 이미지를 자동 수집하여 포스트 폴더에 저장합니다.")
+
+        fetch_tab_url, fetch_tab_kw = st.tabs(["🔗 기사 URL에서 수집", "🔍 키워드 검색으로 수집"])
+
+        def _pick_save_dir(sel_key: str) -> Path:
+            posts_f = get_all_posts()
+            opts    = ["📁 새 폴더 (오늘 날짜)"] + [f"[{p['date']}] {p['title']}" for p in posts_f]
+            sel     = st.selectbox("저장할 포스트 폴더", opts, key=sel_key)
+            if sel == "📁 새 폴더 (오늘 날짜)":
+                td = datetime.datetime.now().strftime("%Y-%m-%d")
+                return POSTS_DIR / td / "news_images"
+            pidx = opts.index(sel) - 1
+            return posts_f[pidx]["dir"]
+
+        def _next_img_num(folder: Path) -> int:
+            nums = [int(f.stem) for f in folder.iterdir()
+                    if f.is_file() and f.stem.isdigit()
+                    and f.suffix.lower() in (".jpg", ".png", ".jpeg", ".webp")]
+            return max(nums, default=0) + 1
+
+        with fetch_tab_url:
+            col_u, col_n = st.columns([3, 1])
+            with col_u:
+                news_url = st.text_input("뉴스 기사 URL", placeholder="https://n.news.naver.com/...")
+            with col_n:
+                max_art = st.number_input("최대 이미지 수", 1, 10, 5, key="max_art")
+            save_dir_url = _pick_save_dir("url_save_sel")
+
+            if st.button("📰 이미지 수집 시작", type="primary",
+                         disabled=not news_url.strip(), key="fetch_url_btn"):
+                from image_fetcher import fetch_article_images
+                save_dir_url.mkdir(parents=True, exist_ok=True)
+                start = _next_img_num(save_dir_url)
+                with st.spinner("기사에서 이미지 수집 중..."):
+                    nxt = fetch_article_images(news_url.strip(), str(save_dir_url),
+                                               start_num=start, max_images=int(max_art))
+                collected = nxt - start
+                if collected > 0:
+                    st.success(f"✅ {collected}장 수집 완료!  저장 위치: {save_dir_url}")
+                    imgs_new = [str(save_dir_url / f"{start+i}.jpg") for i in range(collected)
+                                if (save_dir_url / f"{start+i}.jpg").exists()]
+                    if imgs_new:
+                        c2 = st.columns(min(5, len(imgs_new)))
+                        for i, p in enumerate(imgs_new):
+                            with c2[i % 5]:
+                                st.image(p, caption=Path(p).name, use_container_width=True)
+                else:
+                    st.warning("이미지를 수집하지 못했습니다. URL을 확인해주세요.")
+
+        with fetch_tab_kw:
+            col_k, col_nk = st.columns([3, 1])
+            with col_k:
+                keyword = st.text_input("검색 키워드", placeholder="예: 래미안 원펜타스 조감도")
+            with col_nk:
+                max_kw = st.number_input("최대 이미지 수", 1, 10, 4, key="max_kw")
+            save_dir_kw = _pick_save_dir("kw_save_sel")
+
+            if st.button("🔍 키워드로 이미지 수집", type="primary",
+                         disabled=not keyword.strip(), key="fetch_kw_btn"):
+                from image_fetcher import _search_naver_images, _download_single
+                save_dir_kw.mkdir(parents=True, exist_ok=True)
+                start_k = _next_img_num(save_dir_kw)
+                with st.spinner(f"'{keyword}' 이미지 검색 중..."):
+                    urls_k   = _search_naver_images(keyword.strip(), max_urls=int(max_kw) * 2)
+                    dl_count = 0
+                    for url_k in urls_k:
+                        if dl_count >= int(max_kw):
+                            break
+                        sp_k = save_dir_kw / f"{start_k + dl_count}.jpg"
+                        if _download_single(url_k, str(sp_k)):
+                            dl_count += 1
+                if dl_count > 0:
+                    st.success(f"✅ {dl_count}장 수집 완료!")
+                    imgs_k = [str(save_dir_kw / f"{start_k+i}.jpg") for i in range(dl_count)
+                              if (save_dir_kw / f"{start_k+i}.jpg").exists()]
+                    if imgs_k:
+                        ck = st.columns(min(5, len(imgs_k)))
+                        for i, p in enumerate(imgs_k):
+                            with ck[i % 5]:
+                                st.image(p, caption=Path(p).name, use_container_width=True)
+                else:
+                    st.warning("이미지를 찾지 못했습니다. 키워드를 바꿔보세요.")
+
+    # ══ 모드 3: 업로드 이미지 기반 생성 ══
+    else:
+        if not leo_key:
+            st.error("❌ LEONARDO_API_KEY가 없습니다.")
         else:
             st.markdown("참조 이미지를 업로드하면 그 스타일을 반영한 새 이미지를 생성합니다.")
 
             col_up, col_form = st.columns([1, 2])
-
             with col_up:
                 uploaded = st.file_uploader(
                     "참조 이미지 업로드",
@@ -857,93 +1024,81 @@ with tab_image:
                     height=110,
                 )
                 strength = st.slider(
-                    "원본 이미지 영향도",
-                    min_value=0.1, max_value=0.9, value=0.45, step=0.05,
+                    "원본 이미지 영향도", min_value=0.1, max_value=0.9, value=0.45, step=0.05,
                     help="낮을수록 프롬프트 중심, 높을수록 원본 이미지 유지",
                 )
                 st.caption(f"{'← 프롬프트 중심':<25} {'원본 유지 →':>20}")
 
-                # 저장 위치 선택
-                posts = get_all_posts()
-                save_options = ["📁 새 폴더 (오늘 날짜)"] + [f"[{p['date']}] {p['title']}" for p in posts]
-                save_sel = st.selectbox("저장할 포스트 폴더", save_options)
-
+                posts_u   = get_all_posts()
+                save_opts = ["📁 새 폴더 (오늘 날짜)"] + [f"[{p['date']}] {p['title']}" for p in posts_u]
+                save_sel  = st.selectbox("저장할 포스트 폴더", save_opts, key="upload_save_sel")
                 if save_sel == "📁 새 폴더 (오늘 날짜)":
-                    today = datetime.datetime.now().strftime("%Y-%m-%d")
-                    save_dir = POSTS_DIR / today / "generated_images"
+                    td_u       = datetime.datetime.now().strftime("%Y-%m-%d")
+                    save_dir_u = POSTS_DIR / td_u / "generated_images"
                 else:
-                    pidx = save_options.index(save_sel) - 1
-                    save_dir = posts[pidx]["dir"]
-
+                    pidx_u     = save_opts.index(save_sel) - 1
+                    save_dir_u = posts_u[pidx_u]["dir"]
                 num_gen = st.number_input("생성할 이미지 수", min_value=1, max_value=4, value=1)
 
-            # 생성 버튼
-            can_generate = prompt_input.strip() != ""
-            if not can_generate:
+            can_gen = bool(prompt_input.strip())
+            if not can_gen:
                 st.warning("이미지 설명(프롬프트)을 입력해주세요.")
 
-            if st.button(
-                "🎨 이미지 생성 시작",
-                type="primary",
-                disabled=not can_generate,
-                use_container_width=False,
-            ):
+            if st.button("🎨 이미지 생성 시작", type="primary",
+                         disabled=not can_gen, use_container_width=False, key="img2img_btn"):
                 from leonardo_generator import (
-                    upload_init_image,
-                    generate_text_to_image,
-                    generate_image_to_image,
-                    poll_until_complete,
-                    download_image,
+                    upload_init_image, generate_text_to_image,
+                    generate_image_to_image, poll_until_complete, download_image,
                 )
-
-                save_dir.mkdir(parents=True, exist_ok=True)
-                status_txt = st.empty()
-
+                save_dir_u.mkdir(parents=True, exist_ok=True)
+                status_u = st.empty()
                 try:
-                    # 이미지 업로드 (있는 경우)
                     init_image_id = None
                     if uploaded:
-                        status_txt.write("☁️ 참조 이미지 Leonardo에 업로드 중...")
+                        status_u.write("☁️ 참조 이미지 Leonardo에 업로드 중...")
                         ext = uploaded.name.rsplit(".", 1)[-1].lower()
                         init_image_id = upload_init_image(uploaded.getvalue(), ext, leo_key)
-                        status_txt.write("✅ 업로드 완료. 이미지 생성 요청 중...")
+                        status_u.write("✅ 업로드 완료. 이미지 생성 요청 중...")
 
-                    # 생성 요청
                     if init_image_id:
-                        gen_id = generate_image_to_image(
+                        gen_id_u = generate_image_to_image(
                             prompt_input.strip(), init_image_id, strength, leo_key,
                             num_images=int(num_gen),
                         )
                     else:
-                        gen_id = generate_text_to_image(
+                        gen_id_u = generate_text_to_image(
                             prompt_input.strip(), leo_key, num_images=int(num_gen),
                         )
 
-                    # 폴링
-                    tick_txt = st.empty()
-                    def on_tick_up(elapsed, _t=tick_txt):
+                    tick_u = st.empty()
+                    def on_tick_u(elapsed, _t=tick_u):
                         _t.caption(f"생성 중... {elapsed}초 경과")
+                    status_u.write("⏳ Leonardo가 이미지를 그리는 중...")
+                    urls_u = poll_until_complete(gen_id_u, leo_key, on_tick=on_tick_u)
+                    tick_u.empty()
 
-                    status_txt.write("⏳ Leonardo가 이미지를 그리는 중...")
-                    urls = poll_until_complete(gen_id, leo_key, on_tick=on_tick_up)
-                    tick_txt.empty()
-
-                    if urls:
-                        ts   = datetime.datetime.now().strftime("%H%M%S")
-                        cols = st.columns(len(urls))
-                        for i, url in enumerate(urls):
-                            fname     = f"leo_{ts}_{i+1}.jpg"
-                            save_path = save_dir / fname
-                            download_image(url, str(save_path))
-                            with cols[i]:
-                                st.image(str(save_path), caption=fname, use_container_width=True)
-
-                        status_txt.success(f"🎉 {len(urls)}장 생성 완료! 저장 위치: {save_dir}")
+                    if urls_u:
+                        start_u = max(
+                            ([int(f.stem) for f in save_dir_u.iterdir()
+                              if f.is_file() and f.stem.isdigit()] or [0])
+                        ) + 1
+                        saved_u = []
+                        cols_u  = st.columns(min(5, len(urls_u)))
+                        for i, url in enumerate(urls_u):
+                            fname_u = f"{start_u + i}.jpg"
+                            sp_u    = save_dir_u / fname_u
+                            if download_image(url, str(sp_u)):
+                                saved_u.append(sp_u)
+                                with cols_u[i % 5]:
+                                    st.image(str(sp_u), caption=fname_u, use_container_width=True)
+                                    if st.button("🗑", key=f"del_u_{i}", use_container_width=True):
+                                        sp_u.unlink(missing_ok=True)
+                                        st.rerun()
+                        status_u.success(f"🎉 {len(saved_u)}장 생성 완료!  저장: {save_dir_u}")
                     else:
-                        status_txt.error("이미지 생성에 실패했습니다. 프롬프트나 API 키를 확인해주세요.")
-
+                        status_u.error("이미지 생성에 실패했습니다. 프롬프트나 API 키를 확인하세요.")
                 except Exception as e:
-                    status_txt.error(f"오류 발생: {e}")
+                    status_u.error(f"오류 발생: {e}")
 
 
 # ─────────────────────────────────────────
