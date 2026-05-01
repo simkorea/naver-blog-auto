@@ -98,9 +98,33 @@ st.markdown("""
 /* ─── 0. Pretendard 웹폰트 ─── */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
 
-*, *::before, *::after {
+/*
+ * ⚠ 폰트 적용 범위를 텍스트 요소만으로 한정.
+ * i / svg / [class*="material"] 은 절대 건드리지 않음
+ * → Material Icons ligature 보호
+ */
+html, body {
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
+               'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+}
+p, span, h1, h2, h3, h4, h5, h6,
+div[data-testid="stMarkdownContainer"],
+div[data-testid="stText"],
+input, textarea, select,
+button[data-baseweb="tab"],
+label, a, td, th, li {
   font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
                'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif !important;
+}
+
+/* ── 아이콘 폰트 보호 (절대 건드리지 않음) ── */
+i, svg, svg *,
+[class*="material"],
+[class*="icon"],
+button i, summary i,
+span[data-testid*="Icon"],
+div[data-testid*="Icon"] {
+  font-family: inherit !important;  /* Material Icons 자체 폰트 유지 */
 }
 
 /* ─── 1. Streamlit 브랜딩 완전 제거 ─── */
@@ -122,7 +146,7 @@ div[data-testid="block-container"] {
   max-width: 1440px !important;
 }
 
-/* ─── 3. 사이드바 — 다크 네이비 ─── */
+/* ─── 3. 사이드바 — 다크 네이비 (최소 침범) ─── */
 section[data-testid="stSidebar"] {
   background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%) !important;
   border-right: 1px solid rgba(255,255,255,0.06) !important;
@@ -130,21 +154,18 @@ section[data-testid="stSidebar"] {
 section[data-testid="stSidebar"] > div:first-child {
   padding-top: 1.5rem !important;
 }
-section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] span,
-section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] div {
-  color: #94a3b8 !important;
-}
+
+/*
+ * 텍스트 색상은 명시적 텍스트 요소만 타겟.
+ * div / span 전체 덮어쓰기 금지 → 아이콘 색 충돌 방지
+ */
+section[data-testid="stSidebar"] p { color: #94a3b8 !important; }
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3 {
-  color: #f1f5f9 !important;
-}
-section[data-testid="stSidebar"] hr {
-  border-color: rgba(255,255,255,0.1) !important;
-}
-/* 사이드바 라디오 버튼 */
+section[data-testid="stSidebar"] h3 { color: #f1f5f9 !important; }
+section[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1) !important; }
+
+/* 사이드바 라디오 — label 텍스트만 */
 section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
   border-radius: 8px !important;
   padding: 0.45rem 0.75rem !important;
@@ -152,8 +173,29 @@ section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
   color: #94a3b8 !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover {
-  background: rgba(255,255,255,0.07) !important;
+  background: rgba(255,255,255,0.08) !important;
   color: #e2e8f0 !important;
+}
+
+/* 사이드바 Expander — Streamlit 기본 스타일 유지, 배경만 투명 */
+section[data-testid="stSidebar"] div[data-testid="stExpander"] {
+  background: transparent !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  box-shadow: none !important;
+  border-radius: 8px !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] summary {
+  color: #cbd5e1 !important;
+  padding: 0.6rem 0.9rem !important;
+  background: transparent !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stExpander"] summary:hover {
+  background: rgba(255,255,255,0.06) !important;
+}
+/* 사이드바 expander 내부 텍스트 */
+section[data-testid="stSidebar"] div[data-testid="stExpander"] p,
+section[data-testid="stSidebar"] div[data-testid="stExpander"] label {
+  color: #94a3b8 !important;
 }
 
 /* ─── 4. 탭 ─── */
@@ -292,8 +334,11 @@ div.stDownloadButton > button:hover {
   transform: translateY(-1px) !important;
 }
 
-/* ─── 7. Expander — 카드 ─── */
-div[data-testid="stExpander"] {
+/* ─── 7. Expander — 메인 영역만 카드 (사이드바 제외) ─── */
+div[data-testid="stAppViewContainer"]
+  div[data-testid="stExpander"]:not(
+    section[data-testid="stSidebar"] div[data-testid="stExpander"]
+  ) {
   background: #ffffff !important;
   border-radius: 12px !important;
   border: 1px solid #e2e8f0 !important;
@@ -301,13 +346,22 @@ div[data-testid="stExpander"] {
   overflow: hidden !important;
   margin-bottom: 0.75rem !important;
 }
-div[data-testid="stExpander"] summary {
+/* 메인 콘텐츠 블록 안에서만 적용 */
+div[data-testid="block-container"] div[data-testid="stExpander"] {
+  background: #ffffff !important;
+  border-radius: 12px !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
+  overflow: hidden !important;
+  margin-bottom: 0.75rem !important;
+}
+div[data-testid="block-container"] div[data-testid="stExpander"] summary {
   padding: 0.9rem 1.25rem !important;
   font-weight: 600 !important;
   font-size: 0.9rem !important;
   color: #1e293b !important;
 }
-div[data-testid="stExpander"] summary:hover {
+div[data-testid="block-container"] div[data-testid="stExpander"] summary:hover {
   background: #f8fafc !important;
 }
 
