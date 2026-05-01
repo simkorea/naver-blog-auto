@@ -10,26 +10,26 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
-# ── Google Sheets 헬퍼 ──
-def _gsheets_push(title: str, content: str, tags: str, local_folder: str) -> tuple[bool, str]:
-    creds_json = get_secret("GOOGLE_SERVICE_ACCOUNT_JSON")
-    sheet_id   = get_secret("GOOGLE_SHEET_ID")
-    if not creds_json or not sheet_id:
-        return False, "GOOGLE_SERVICE_ACCOUNT_JSON 또는 GOOGLE_SHEET_ID 가 secrets에 없습니다."
+# ── Supabase 헬퍼 ──
+def _supabase_push(title: str, content: str, tags: str, local_folder: str) -> tuple[bool, str]:
+    url = get_secret("SUPABASE_URL")
+    key = get_secret("SUPABASE_KEY")
+    if not url or not key:
+        return False, "SUPABASE_URL 또는 SUPABASE_KEY 가 secrets에 없습니다."
     try:
-        from google_sheets import push_pending
-        return push_pending(creds_json, sheet_id, title, content, tags, local_folder)
+        from supabase_db import push_pending
+        return push_pending(url, key, title, content, tags, local_folder)
     except Exception as e:
         return False, str(e)
 
-def _gsheets_all_rows() -> list[dict]:
-    creds_json = get_secret("GOOGLE_SERVICE_ACCOUNT_JSON")
-    sheet_id   = get_secret("GOOGLE_SHEET_ID")
-    if not creds_json or not sheet_id:
+def _supabase_all_rows() -> list[dict]:
+    url = get_secret("SUPABASE_URL")
+    key = get_secret("SUPABASE_KEY")
+    if not url or not key:
         return []
     try:
-        from google_sheets import get_all_rows
-        return get_all_rows(creds_json, sheet_id)
+        from supabase_db import get_all_rows
+        return get_all_rows(url, key)
     except Exception:
         return []
 
@@ -635,9 +635,9 @@ with tab_editor:
             f"📄 원고 **{char_cnt:,}자**  |  🖼️ 이미지 **{img_cnt}장**  |  📁 `{post_dir.name}`"
         )
 
-        # ── 최종 포스팅 (Google Sheets 대기열) ──
-        gsheet_ok = bool(get_secret("GOOGLE_SHEET_ID") and get_secret("GOOGLE_SERVICE_ACCOUNT_JSON"))
-        if gsheet_ok:
+        # ── 최종 포스팅 (Supabase 대기열) ──
+        supabase_ok = bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_KEY"))
+        if supabase_ok:
             if st.button("📋 최종 포스팅 (발행 대기열 등록)", type="primary",
                          use_container_width=True, key="final_post_btn"):
                 content_now = st.session_state["edited_content"]
@@ -648,8 +648,8 @@ with tab_editor:
                 (post_dir / "content.txt").write_text(content_now, encoding="utf-8")
                 save_img_order(post_dir, st.session_state["img_order"])
 
-                with st.spinner("구글 시트에 등록 중..."):
-                    ok, msg = _gsheets_push(post_title, content_now, tags, post_dir.name)
+                with st.spinner("Supabase에 등록 중..."):
+                    ok, msg = _supabase_push(post_title, content_now, tags, post_dir.name)
 
                 if ok:
                     st.success(
@@ -659,9 +659,9 @@ with tab_editor:
                 else:
                     st.error(f"❌ 등록 실패: {msg}")
         else:
-            st.button("📋 최종 포스팅 (Google Sheets 미설정)", disabled=True,
+            st.button("📋 최종 포스팅 (Supabase 미설정)", disabled=True,
                       use_container_width=True, key="final_post_disabled")
-            st.caption("시스템 상태 탭에서 GOOGLE_SHEET_ID / GOOGLE_SERVICE_ACCOUNT_JSON 설정을 확인하세요.")
+            st.caption("시스템 상태 탭에서 SUPABASE_URL / SUPABASE_KEY 설정을 확인하세요.")
 
         st.divider()
         col_up, col_dl = st.columns(2)
@@ -1097,18 +1097,18 @@ with tab_status:
     st.divider()
     st.subheader("📋 Google Sheets 발행 대기열")
 
-    gs_ok = bool(get_secret("GOOGLE_SHEET_ID") and get_secret("GOOGLE_SERVICE_ACCOUNT_JSON"))
+    gs_ok = bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_KEY"))
     if not gs_ok:
         st.warning(
-            "Google Sheets 미연결 — Streamlit Cloud Secrets에 아래 두 키를 추가하세요:  \n"
-            "`GOOGLE_SHEET_ID` · `GOOGLE_SERVICE_ACCOUNT_JSON`"
+            "Supabase 미연결 — Streamlit Cloud Secrets에 아래 두 키를 추가하세요:  \n"
+            "`SUPABASE_URL` · `SUPABASE_KEY`"
         )
     else:
         if st.button("🔄 대기열 새로고침", key="refresh_queue"):
             st.rerun()
 
-        with st.spinner("구글 시트 조회 중..."):
-            rows = _gsheets_all_rows()
+        with st.spinner("Supabase 조회 중..."):
+            rows = _supabase_all_rows()
 
         if not rows:
             st.info("등록된 항목이 없습니다.")
