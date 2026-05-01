@@ -11,14 +11,17 @@ import streamlit as st
 from dotenv import load_dotenv
 
 # ── Supabase 헬퍼 ──
-def _supabase_push(title: str, content: str, tags: str, local_folder: str) -> tuple[bool, str]:
+def _supabase_push(
+    title: str, content: str, tags: str, local_folder: str,
+    scheduled_at: str = "",
+) -> tuple[bool, str]:
     url = get_secret("SUPABASE_URL")
     key = get_secret("SUPABASE_KEY")
     if not url or not key:
         return False, "SUPABASE_URL 또는 SUPABASE_KEY 가 secrets에 없습니다."
     try:
         from supabase_db import push_pending
-        return push_pending(url, key, title, content, tags, local_folder)
+        return push_pending(url, key, title, content, tags, local_folder, scheduled_at)
     except Exception as e:
         return False, str(e)
 
@@ -99,32 +102,50 @@ st.markdown("""
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
 
 /*
- * ⚠ 폰트 적용 범위를 텍스트 요소만으로 한정.
- * i / svg / [class*="material"] 은 절대 건드리지 않음
- * → Material Icons ligature 보호
- */
+ * ── 폰트 전략 ──────────────────────────────────────────
+ *  1. html/body 에 Pretendard 기본값 (느슨하게: !important 없음)
+ *     → 대부분의 텍스트는 여기서 상속
+ *  2. 확실히 텍스트만 담는 요소에만 !important 사용
+ *     → span / label / a / button 전체 타겟 절대 금지
+ *        (Material Symbols ligature 스팬이 포함되기 때문)
+ *  3. 아이콘 요소에는 실제 폰트명을 명시적으로 복원
+ *     → inherit 금지 (부모가 이미 Pretendard면 무의미)
+ * ────────────────────────────────────────────────────── */
 html, body {
   font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
                'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
 }
-p, span, h1, h2, h3, h4, h5, h6,
+
+/* 순수 텍스트 컨테이너에만 !important */
+input, textarea, select,
+p, h1, h2, h3, h4, h5, h6,
+li, td, th, caption,
 div[data-testid="stMarkdownContainer"],
 div[data-testid="stText"],
-input, textarea, select,
-button[data-baseweb="tab"],
-label, a, td, th, li {
+button[data-baseweb="tab"] {
   font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
                'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif !important;
 }
 
-/* ── 아이콘 폰트 보호 (절대 건드리지 않음) ── */
-i, svg, svg *,
-[class*="material"],
-[class*="icon"],
-button i, summary i,
-span[data-testid*="Icon"],
-div[data-testid*="Icon"] {
-  font-family: inherit !important;  /* Material Icons 자체 폰트 유지 */
+/* ── 아이콘 폰트 명시적 복원 ───────────────────────────
+ * Streamlit 1.28+ : Material Symbols Rounded
+ * 구버전           : Material Icons
+ * inherit 사용 금지 → 부모가 Pretendard면 그대로 상속됨
+ * ─────────────────────────────────────────────────── */
+i,
+[aria-hidden="true"],
+span[class*="material"],
+span[class*="symbol"],
+section[data-testid="stSidebar"] button span,
+section[data-testid="stSidebar"] summary > span,
+details > summary > span:first-child,
+details > summary > span:last-child,
+button[data-testid="baseButton-headerNoPadding"] span,
+button[data-testid="collapsedControl"] span,
+button[data-testid="expandedControl"] span {
+  font-family: 'Material Symbols Rounded', 'Material Icons',
+               'Material Icons Outlined', 'Material Symbols Outlined',
+               serif !important;
 }
 
 /* ─── 1. Streamlit 브랜딩 완전 제거 ─── */
@@ -484,30 +505,58 @@ if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
 if not st.session_state["authenticated"]:
-    st.markdown(
-        """
-        <style>
-        section[data-testid="stSidebar"] {display: none;}
-        div[data-testid="stAppViewContainer"] > div:first-child {padding-top: 5rem;}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    _, center, _ = st.columns([1, 1, 1])
+    st.markdown("""
+    <style>
+    section[data-testid="stSidebar"] { display: none !important; }
+    div[data-testid="stAppViewContainer"] {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #312e81 100%) !important;
+    }
+    div[data-testid="block-container"] {
+      padding-top: 6vh !important;
+      padding-bottom: 4vh !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── 로그인 헤더 ──
+    st.markdown("""
+    <div style="text-align:center; margin-bottom:2.25rem;">
+      <div style="display:inline-flex; align-items:center; justify-content:center;
+                  background:linear-gradient(135deg,#7c3aed,#4f46e5);
+                  border-radius:16px; width:64px; height:64px; font-size:1.9rem;
+                  box-shadow:0 8px 24px rgba(124,58,237,0.45); margin-bottom:1rem;">
+        🏠
+      </div>
+      <h1 style="color:#ffffff; font-size:1.85rem; font-weight:800;
+                 letter-spacing:-0.02em; margin:0 0 0.4rem;">
+        네이버 부동산 블로그 자동화
+      </h1>
+      <p style="color:#94a3b8; font-size:0.9rem; margin:0;">
+        AI 원고 생성 &nbsp;·&nbsp; Leonardo 이미지 &nbsp;·&nbsp; 자동 발행 통합 플랫폼
+      </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    _, center, _ = st.columns([1, 1.1, 1])
     with center:
-        st.markdown("## 🏠 네이버 블로그 자동화")
-        st.markdown("접속하려면 로그인이 필요합니다.")
-        st.write("")
         with st.form("login_form"):
-            uid = st.text_input("아이디", placeholder="아이디 입력")
-            pw  = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
-            submitted = st.form_submit_button("로그인", use_container_width=True, type="primary")
+            uid = st.text_input("아이디", placeholder="아이디를 입력하세요")
+            pw  = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요")
+            submitted = st.form_submit_button("🔐  로그인", use_container_width=True, type="primary")
         if submitted:
             if uid == get_secret("APP_USER") and pw == get_secret("APP_PASSWORD"):
                 st.session_state["authenticated"] = True
                 st.rerun()
             else:
                 st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
+
+        st.markdown("""
+        <div style="display:flex; justify-content:center; gap:1.5rem; margin-top:1.25rem;">
+          <span style="color:#475569; font-size:0.78rem;">✨ Gemini AI 원고</span>
+          <span style="color:#475569; font-size:0.78rem;">🎨 Leonardo 이미지</span>
+          <span style="color:#475569; font-size:0.78rem;">🚀 자동 발행</span>
+        </div>
+        """, unsafe_allow_html=True)
     st.stop()
 
 # ── 세션 초기화 ──
@@ -878,6 +927,24 @@ if IS_CLOUD:
         "생성된 포스트는 현재 세션에서만 유지됩니다. 작업 후 ZIP을 반드시 저장하세요."
     )
 
+# ── 발행 큐 상태 메트릭 바 (Supabase 연결 시 상시 표시) ──
+if bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_KEY")):
+    _q_rows = _supabase_all_rows()
+    if _q_rows:
+        _q_pend = sum(1 for r in _q_rows if r.get("status") == "pending")
+        _q_proc = sum(1 for r in _q_rows if r.get("status") == "processing")
+        _q_done = sum(1 for r in _q_rows if r.get("status") == "done")
+        _q_err  = sum(1 for r in _q_rows if r.get("status") == "error")
+        _qm1, _qm2, _qm3, _qm4, _qm5 = st.columns(5)
+        _qm1.metric("📋 전체 요청",  len(_q_rows))
+        _qm2.metric("🟡 대기 중",    _q_pend)
+        _qm3.metric("🔵 처리 중",    _q_proc)
+        _qm4.metric("🟢 발행 완료",  _q_done)
+        _qm5.metric("🔴 오류",       _q_err,
+                    delta=(f"−{_q_err}" if _q_err else None),
+                    delta_color=("inverse" if _q_err else "normal"))
+        st.markdown("<div style='margin-bottom:0.5rem;'></div>", unsafe_allow_html=True)
+
 tab_editor, tab_image, tab_posts, tab_status = st.tabs(["📝 원고 에디터", "🎨 이미지 생성", "📂 포스트 관리", "📊 시스템 상태"])
 
 # ─────────────────────────────────────────
@@ -1055,24 +1122,62 @@ with tab_editor:
         # ── 최종 포스팅 (Supabase 대기열) ──
         supabase_ok = bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_KEY"))
         if supabase_ok:
-            if st.button("📋 최종 포스팅 (발행 대기열 등록)", type="primary",
-                         use_container_width=True, key="final_post_btn"):
+            # 예약 발행 설정
+            use_schedule = st.checkbox(
+                "📅 예약 발행 설정",
+                key="use_schedule_chk",
+                help="체크하면 지정한 날짜/시각에 자동으로 발행됩니다. watcher.py가 실행 중이어야 합니다.",
+            )
+            scheduled_at_val = ""
+            if use_schedule:
+                _sc1, _sc2 = st.columns(2)
+                with _sc1:
+                    _sched_date = st.date_input(
+                        "발행 날짜",
+                        value=datetime.datetime.now().date() + datetime.timedelta(days=1),
+                        key="sched_date",
+                    )
+                with _sc2:
+                    _sched_time = st.time_input(
+                        "발행 시각",
+                        value=datetime.time(9, 0),
+                        key="sched_time",
+                    )
+                scheduled_at_val = datetime.datetime.combine(_sched_date, _sched_time).isoformat()
+                st.info(
+                    f"📅 **{_sched_date}** {_sched_time.strftime('%H:%M')} 에 자동 발행 예약됩니다.  \n"
+                    "로컬 PC의 `watcher.py` 가 해당 시간에 실행 중이어야 합니다."
+                )
+
+            btn_label = (
+                f"📋 예약 발행 등록 ({_sched_date} {_sched_time.strftime('%H:%M')})"
+                if use_schedule else "📋 즉시 발행 대기열 등록"
+            )
+            if st.button(btn_label, type="primary", use_container_width=True, key="final_post_btn"):
                 content_now = st.session_state["edited_content"]
                 paras       = [p.strip() for p in content_now.split("\n\n") if p.strip()]
                 post_title  = paras[0] if paras else post_dir.name
                 tags        = _extract_tags(content_now)
-                # 최신 내용 저장
                 (post_dir / "content.txt").write_text(content_now, encoding="utf-8")
                 save_img_order(post_dir, st.session_state["img_order"])
 
                 with st.spinner("Supabase에 등록 중..."):
-                    ok, msg = _supabase_push(post_title, content_now, tags, post_dir.name)
+                    ok, msg = _supabase_push(
+                        post_title, content_now, tags, post_dir.name,
+                        scheduled_at=scheduled_at_val,
+                    )
 
                 if ok:
-                    st.success(
-                        f"✅ 발행 대기열에 등록됐습니다! (ID: `{msg}`)  \n"
-                        "로컬 매크로 PC에서 `python local_runner.py` 를 실행하면 자동 업로드됩니다."
-                    )
+                    if scheduled_at_val:
+                        st.success(
+                            f"✅ 예약 발행 등록 완료! (ID: `{msg}`)  \n"
+                            f"📅 **{_sched_date} {_sched_time.strftime('%H:%M')}** 에 자동 발행됩니다."
+                        )
+                    else:
+                        st.success(
+                            f"✅ 발행 대기열에 등록됐습니다! (ID: `{msg}`)  \n"
+                            "로컬 매크로 PC에서 `python watcher.py` 를 실행하면 자동 업로드됩니다."
+                        )
                 else:
                     st.error(f"❌ 등록 실패: {msg}")
         else:
@@ -1627,17 +1732,53 @@ with tab_status:
     st.divider()
     st.subheader("포스트 통계")
     posts = get_all_posts()
-    col_a, col_b, col_c = st.columns(3)
+    col_a, col_b, col_c, col_d = st.columns(4)
     col_a.metric("전체 포스트", f"{len(posts)}개")
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     today_cnt = sum(1 for p in posts if p["date"] == today)
     col_b.metric("오늘 생성", f"{today_cnt}개")
     total_imgs = sum(len(get_images(p["dir"])) for p in posts)
     col_c.metric("전체 수집 이미지", f"{total_imgs}장")
+    total_chars = 0
+    for p in posts:
+        try:
+            total_chars += len(p["content_path"].read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    col_d.metric("누적 원고 글자 수", f"{total_chars:,}자")
 
-    # ── Google Sheets 발행 대기열 현황 ──
+    # ── 키워드 빈도 차트 ──
+    if posts:
+        st.divider()
+        st.subheader("🔍 포스트 제목 키워드 빈도")
+        st.caption("원고 첫 줄(제목)에서 자주 등장하는 단어 Top 15")
+        _stopwords = {
+            "의", "에", "이", "가", "을", "를", "은", "는", "와", "과",
+            "로", "으로", "에서", "에게", "부터", "까지", "이다", "합니다",
+            "있는", "있습니다", "하는", "하고", "대한", "또는", "그리고",
+            "아파트", "분양", "정보", "현장", "최신",
+        }
+        _word_freq: dict = {}
+        for _p in posts:
+            try:
+                _first = _p["content_path"].read_text(encoding="utf-8").split("\n")[0]
+            except Exception:
+                _first = _p["title"]
+            for _w in re.findall(r"[가-힣]{2,6}", _first):
+                if _w not in _stopwords:
+                    _word_freq[_w] = _word_freq.get(_w, 0) + 1
+        if _word_freq:
+            import pandas as pd
+            _chart_data = (
+                pd.DataFrame(sorted(_word_freq.items(), key=lambda x: x[1], reverse=True)[:15],
+                             columns=["키워드", "빈도"])
+                .set_index("키워드")
+            )
+            st.bar_chart(_chart_data, color="#7c3aed")
+
+    # ── Supabase 발행 대기열 현황 ──
     st.divider()
-    st.subheader("📋 Google Sheets 발행 대기열")
+    st.subheader("📋 Supabase 발행 대기열")
 
     gs_ok = bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_KEY"))
     if not gs_ok:
@@ -1646,8 +1787,10 @@ with tab_status:
             "`SUPABASE_URL` · `SUPABASE_KEY`"
         )
     else:
-        if st.button("🔄 대기열 새로고침", key="refresh_queue"):
-            st.rerun()
+        _ref_col, _csv_col = st.columns([1, 1])
+        with _ref_col:
+            if st.button("🔄 대기열 새로고침", key="refresh_queue", use_container_width=True):
+                st.rerun()
 
         with st.spinner("Supabase 조회 중..."):
             rows = _supabase_all_rows()
@@ -1655,22 +1798,42 @@ with tab_status:
         if not rows:
             st.info("등록된 항목이 없습니다.")
         else:
+            import pandas as pd
             status_colors = {
                 "pending":    "🟡",
                 "processing": "🔵",
                 "done":       "🟢",
                 "error":      "🔴",
             }
-            import pandas as pd
-            df = pd.DataFrame(rows)[["id","created_at","title","status","error_msg","local_folder"]]
+
+            # 표시용 컬럼 선택 (scheduled_at 컬럼이 있을 수도 없을 수도 있음)
+            _base_cols = ["id", "created_at", "title", "status", "error_msg", "local_folder"]
+            _all_keys  = list(rows[0].keys()) if rows else []
+            _show_cols = [c for c in (_base_cols + ["scheduled_at"]) if c in _all_keys]
+
+            df = pd.DataFrame(rows)[_show_cols].copy()
             df["status"] = df["status"].map(lambda s: f"{status_colors.get(s,'⚪')} {s}")
             st.dataframe(df, use_container_width=True, hide_index=True)
+
+            with _csv_col:
+                _csv_full = pd.DataFrame(rows)
+                _csv_bytes = _csv_full.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    "📥 발행 이력 CSV 다운로드",
+                    data=_csv_bytes,
+                    file_name=f"publish_history_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="csv_dl_btn",
+                )
 
             pending_n = sum(1 for r in rows if r.get("status") == "pending")
             done_n    = sum(1 for r in rows if r.get("status") == "done")
             error_n   = sum(1 for r in rows if r.get("status") == "error")
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("전체",  len(rows))
-            m2.metric("🟡 대기", pending_n)
-            m3.metric("🟢 완료", done_n)
-            m4.metric("🔴 오류", error_n)
+            sched_n   = sum(1 for r in rows if r.get("scheduled_at"))
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("전체",      len(rows))
+            m2.metric("🟡 대기",    pending_n)
+            m3.metric("🟢 완료",    done_n)
+            m4.metric("🔴 오류",    error_n)
+            m5.metric("📅 예약",    sched_n)
