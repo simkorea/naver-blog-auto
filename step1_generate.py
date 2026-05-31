@@ -2,6 +2,7 @@ import os
 import re
 import time
 import datetime
+import urllib.parse
 import requests
 from PIL import Image, ImageDraw, ImageFont
 import google.generativeai as genai
@@ -64,6 +65,10 @@ def generate_blog_content(choice, input_data, persona=None, extra_instruction=No
 <data>
 {data_content}
 </data>{persona_block}{extra_block}
+
+【출력 포맷 필수 준수】
+원고 본문 → 해시태그 → ===CARD_NEWS=== → 카드뉴스 데이터 → ===IMAGE_PROMPTS=== → 영어 이미지 프롬프트 10~15개
+===IMAGE_PROMPTS=== 구분선과 그 아래 영문 프롬프트 목록은 절대 생략하지 마세요.
 """
     print("\n[2] Gemini API로 5000자 원고 및 15장의 영문 사진 프롬프트를 생성 중입니다... (약 30~60초 소요)")
     model = genai.GenerativeModel(
@@ -166,22 +171,11 @@ def make_card_news(image_path, card_data):
 
 def download_images_from_leonardo(prompts, folder_path, card_data=None, start_num=1):
     """
-    Leonardo AI로 이미지를 생성합니다.
+    Pollinations.ai (무료, API 키 불필요) 로 이미지를 생성합니다.
     start_num: 실제 이미지가 이미 채운 다음 번호부터 시작합니다.
     """
-    api_key = os.getenv("LEONARDO_API_KEY")
-    if not api_key:
-        print("[오류] .env에 LEONARDO_API_KEY가 설정되지 않아 AI 이미지 생성을 건너뜁니다.")
-        return
-
-    leo_headers = {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "authorization": f"Bearer {api_key}"
-    }
-
     remaining = len([p for p in prompts if p.strip()])
-    print(f"\n[3] Leonardo AI로 나머지 {remaining}장 이미지를 생성합니다... (슬롯 {start_num}번부터)")
+    print(f"\n[3] Pollinations AI로 나머지 {remaining}장 이미지를 생성합니다... (슬롯 {start_num}번부터)")
 
     leo_idx = 0
     for prompt_text in prompts:
@@ -198,86 +192,30 @@ def download_images_from_leonardo(prompts, folder_path, card_data=None, start_nu
             leo_idx += 1
             continue
 
-        print(f"  -> [{image_num}] Leonardo 생성 요청 중...")
+        print(f"  -> [{image_num}] Pollinations 생성 중...", end="", flush=True)
 
         try:
-            payload = {
-                "prompt": clean_prompt,
-                "num_images": 1,
-                "width": 1024,
-                "height": 1024,
-                "photoReal": True,
-                "alchemy": True
-            }
-            res = requests.post(
-                "https://cloud.leonardo.ai/api/rest/v1/generations",
-                json=payload, headers=leo_headers, timeout=30
+            encoded = urllib.parse.quote(clean_prompt)
+            url = (
+                f"https://image.pollinations.ai/prompt/{encoded}"
+                f"?width=1024&height=1024&nologo=true&model=flux-realism&seed={image_num}"
             )
-
-            if res.status_code == 400 and any(
-                k in res.text for k in ["alchemy", "unauthorized", "unexpected"]
-            ):
-                print(f"     [안내] photoReal 권한 없음 → 기본 모드로 재시도")
-                payload.pop("photoReal")
-                payload.pop("alchemy")
-                res = requests.post(
-                    "https://cloud.leonardo.ai/api/rest/v1/generations",
-                    json=payload, headers=leo_headers, timeout=30
-                )
-
-            if res.status_code != 200:
-                print(f"     [오류] API 거절 (코드 {res.status_code}): {res.text}")
-                leo_idx += 1
-                continue
-
-            generation_id = res.json().get("sdGenerationJob", {}).get("generationId")
-            if not generation_id:
-                print(f"     [오류] generationId를 받지 못했습니다.")
-                leo_idx += 1
-                continue
-
-            status, attempts, image_url = "PENDING", 0, None
-            print(f"     대기 중 (ID: {generation_id}) ", end="", flush=True)
-
-            while status != "COMPLETE" and attempts < 15:
-                time.sleep(5)
-                attempts += 1
-                print(".", end="", flush=True)
-                poll = requests.get(
-                    f"https://cloud.leonardo.ai/api/rest/v1/generations/{generation_id}",
-                    headers=leo_headers, timeout=20
-                )
-                if poll.status_code == 200:
-                    data = poll.json().get("generations_by_pk", {})
-                    status = data.get("status", "")
-                    if status == "COMPLETE":
-                        imgs = data.get("generated_images", [])
-                        if imgs:
-                            image_url = imgs[0].get("url")
-
-            print()
-
-            if not image_url:
-                print(f"     [오류] {image_num}번 생성 실패 (상태: {status})")
-                leo_idx += 1
-                continue
-
-            img_res = requests.get(image_url, timeout=30)
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            img_res = requests.get(url, timeout=90, verify=False, headers=headers)
             img_res.raise_for_status()
+
             with open(image_path, "wb") as f:
                 f.write(img_res.content)
-            print(f"     완료: {image_num}.jpg 저장됨!")
+            print(f" 완료: {image_num}.jpg 저장됨!")
 
-            # 카드뉴스 합성: 1번 슬롯이 Leonardo 담당이 된 경우에만 실행
+            # 카드뉴스 합성: 1번 슬롯이 담당이 된 경우에만 실행
             if image_num == 1 and card_data:
                 make_card_news(image_path, card_data)
 
-            leo_idx += 1
-
         except Exception as e:
             print(f"\n     [오류] {image_num}번 처리 중 예외: {e}")
-            leo_idx += 1
-            continue
+
+        leo_idx += 1
 
 
 def _make_post_folder(content_text):
@@ -301,27 +239,60 @@ def _make_post_folder(content_text):
     return base_dir
 
 
+def _auto_generate_prompts(content_text: str, count: int = 10) -> str:
+    """원고를 기반으로 이미지 프롬프트를 별도 Gemini 호출로 자동 생성합니다."""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return ""
+    genai.configure(api_key=api_key)
+    prompt = f"""아래 부동산 블로그 원고를 보고, 내용을 반영한 극사실적 보도사진 스타일의
+Leonardo AI 이미지 프롬프트를 영어로 {count}개 작성하세요.
+
+규칙:
+- 번호를 붙여 한 줄씩 출력 (1. 2. 3. ...)
+- 그림·일러스트·만화 스타일 절대 금지
+- 각 프롬프트 끝에 반드시 추가: , photorealistic journalistic photo, 35mm lens, realistic lighting, 8k resolution --ar 16:9
+- 프롬프트 목록만 출력, 설명·인사말 없음
+
+원고 (앞 3000자):
+{content_text[:3000]}
+"""
+    try:
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash-lite",
+            generation_config={"temperature": 0.7, "max_output_tokens": 2048},
+        )
+        resp  = model.generate_content(prompt)
+        lines = [ln.strip() for ln in resp.text.split("\n") if ln.strip() and ln.strip()[0].isdigit()]
+        return "\n".join(lines)
+    except Exception as e:
+        print(f"  [프롬프트 자동 생성 실패] {e}")
+        return ""
+
+
 def save_content_and_download_images(full_text, news_url=None):
     # ── AI 출력 파싱: 원고 / 카드뉴스 데이터 / 이미지 프롬프트 분리 ──
     content_text = full_text
 
-    if "===CARD_NEWS===" in content_text:
-        parts = content_text.split("===CARD_NEWS===")
-        content_text = parts[0].strip()
-        rest = parts[1]
-        if "===IMAGE_PROMPTS===" in rest:
-            c_parts      = rest.split("===IMAGE_PROMPTS===")
-            prompts_text = c_parts[1].strip()
-        else:
-            prompts_text = ""
-    elif "===IMAGE_PROMPTS===" in content_text:
-        parts        = content_text.split("===IMAGE_PROMPTS===")
-        content_text = parts[0].strip()
-        prompts_text = parts[1].strip()
+    # ① CARD_NEWS 구분선 처리
+    _CARD_SEP   = re.compile(r"===\s*CARD_NEWS\s*===",   re.IGNORECASE)
+    _PROMPT_SEP = re.compile(r"===\s*IMAGE_PROMPTS\s*===", re.IGNORECASE)
+
+    card_m = _CARD_SEP.search(content_text)
+    if card_m:
+        content_text = content_text[:card_m.start()].strip()
+        rest = full_text[card_m.end():]
+        prompt_m = _PROMPT_SEP.search(rest)
+        prompts_text = rest[prompt_m.end():].strip() if prompt_m else ""
     else:
-        print("[경고] ===IMAGE_PROMPTS=== 구분선을 찾지 못했습니다.")
-        content_text = full_text.strip()
-        prompts_text = ""
+        prompt_m = _PROMPT_SEP.search(content_text)
+        if prompt_m:
+            prompts_text = content_text[prompt_m.end():].strip()
+            content_text = content_text[:prompt_m.start()].strip()
+        else:
+            print("[경고] ===IMAGE_PROMPTS=== 구분선을 찾지 못했습니다.")
+            content_text = full_text.strip()
+            prompts_text = ""
 
     # ── 폴더 생성 (글제목 기반) ──
     base_dir = _make_post_folder(content_text)
@@ -360,15 +331,24 @@ def save_content_and_download_images(full_text, news_url=None):
     )
 
     # 2단계: Leonardo AI 이미지 (나머지 슬롯 채우기)
+    if not prompts_text:
+        print("[안내] 프롬프트 자동 생성 중... (Gemini 재호출)")
+        prompts_text = _auto_generate_prompts(content_text)
+        if prompts_text:
+            # 자동 생성된 프롬프트도 파일로 저장
+            with open(os.path.join(base_dir, "prompts.txt"), "w", encoding="utf-8") as f:
+                f.write(prompts_text)
+            print(f"  → {len([l for l in prompts_text.splitlines() if l.strip()])}개 프롬프트 자동 생성 완료")
+        else:
+            print("[경고] 프롬프트 자동 생성도 실패하여 Leonardo 이미지 생성을 건너뜁니다.")
+
     if prompts_text:
         prompt_lines = [ln for ln in prompts_text.split("\n") if ln.strip()]
         download_images_from_leonardo(
             prompt_lines, base_dir,
             card_data=card_data,
-            start_num=leo_start     # 실제 이미지 다음 번호부터
+            start_num=leo_start,
         )
-    else:
-        print("[경고] 프롬프트가 없어 Leonardo 이미지 생성을 건너뜁니다.")
 
     return base_dir, os.path.join(base_dir, "content.txt")
 

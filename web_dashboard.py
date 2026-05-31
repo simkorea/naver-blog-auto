@@ -1,3 +1,4 @@
+import hashlib
 import io
 import os
 import re
@@ -14,14 +15,19 @@ from dotenv import load_dotenv
 def _supabase_push(
     title: str, content: str, tags: str, local_folder: str,
     scheduled_at: str = "",
+    image_paths: list | None = None,
 ) -> tuple[bool, str]:
     url = get_secret("SUPABASE_URL")
     key = get_secret("SUPABASE_KEY")
     if not url or not key:
         return False, "SUPABASE_URL 또는 SUPABASE_KEY 가 secrets에 없습니다."
     try:
-        from supabase_db import push_pending
-        return push_pending(url, key, title, content, tags, local_folder, scheduled_at)
+        from supabase_db import push_pending, upload_images_to_storage
+        image_urls: list[str] = []
+        if image_paths:
+            image_urls = upload_images_to_storage(url, key, local_folder, image_paths)
+        return push_pending(url, key, title, content, tags, local_folder,
+                            scheduled_at, image_urls or None)
     except Exception as e:
         return False, str(e)
 
@@ -68,6 +74,25 @@ def get_secret(key: str) -> str:
         return st.secrets.get(key, "")
     except Exception:
         return ""
+
+
+# ── 쿠키 기반 인증 유지 ──────────────────────────────────────
+_COOKIE_NAME = "nba_auth_v1"
+
+def _auth_token() -> str:
+    """자격증명 + 서버 시크릿으로 만든 결정론적 토큰."""
+    salt = get_secret("APP_SECRET") or "nba_default_salt_2024"
+    raw  = f"{get_secret('APP_USER')}:{get_secret('APP_PASSWORD')}:{salt}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+try:
+    from streamlit_cookies_controller import CookieController as _CookieController
+    _cc = _CookieController(key="__nba_cc")
+    _COOKIES_OK = True
+except Exception:
+    _cc = None
+    _COOKIES_OK = False
+# ─────────────────────────────────────────────────────────────
 
 
 def make_zip(post_dir: Path) -> bytes:
@@ -158,16 +183,24 @@ button[data-testid="baseButton-header"]      { display: none !important; }
 .stDeployButton                              { display: none !important; }
 div[data-testid="stDecoration"]              { display: none !important; }
 
-/* ─── 2. 앱 배경 ─── */
+/* ─── 2. 앱 배경 & 여백 ─── */
 div[data-testid="stAppViewContainer"] {
   background: #f0f2f8 !important;
 }
 div[data-testid="block-container"] {
-  padding: 2rem 2.5rem 3rem !important;
+  padding: 2.75rem 2.5rem 3.5rem !important;
   max-width: 1440px !important;
 }
+/* 페이지 타이틀 아래 여백 */
+div[data-testid="block-container"] h1:first-of-type {
+  margin-bottom: 1.25rem !important;
+}
+/* 안내 박스(info/warning) 아래 여백 */
+div[data-testid="stAlert"] {
+  margin-bottom: 1.5rem !important;
+}
 
-/* ─── 3. 사이드바 — 다크 네이비 (최소 침범) ─── */
+/* ─── 3. 사이드바 — 다크 네이비 ─── */
 section[data-testid="stSidebar"] {
   background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%) !important;
   border-right: 1px solid rgba(255,255,255,0.06) !important;
@@ -176,29 +209,14 @@ section[data-testid="stSidebar"] > div:first-child {
   padding-top: 1.5rem !important;
 }
 
-/*
- * 텍스트 색상은 명시적 텍스트 요소만 타겟.
- * div / span 전체 덮어쓰기 금지 → 아이콘 색 충돌 방지
- */
-section[data-testid="stSidebar"] p { color: #94a3b8 !important; }
+/* 사이드바 기본 텍스트 — p는 서브텍스트, h는 섹션 타이틀 */
+section[data-testid="stSidebar"] p             { color: #94a3b8 !important; }
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3 { color: #f1f5f9 !important; }
-section[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1) !important; }
+section[data-testid="stSidebar"] h3            { color: #F8F9FA !important; }
+section[data-testid="stSidebar"] hr            { border-color: rgba(255,255,255,0.1) !important; }
 
-/* 사이드바 라디오 — label 텍스트만 */
-section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
-  border-radius: 8px !important;
-  padding: 0.45rem 0.75rem !important;
-  transition: background 0.15s !important;
-  color: #94a3b8 !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover {
-  background: rgba(255,255,255,0.08) !important;
-  color: #e2e8f0 !important;
-}
-
-/* 사이드바 Expander — Streamlit 기본 스타일 유지, 배경만 투명 */
+/* 사이드바 Expander */
 section[data-testid="stSidebar"] div[data-testid="stExpander"] {
   background: transparent !important;
   border: 1px solid rgba(255,255,255,0.1) !important;
@@ -206,16 +224,101 @@ section[data-testid="stSidebar"] div[data-testid="stExpander"] {
   border-radius: 8px !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stExpander"] summary {
-  color: #cbd5e1 !important;
+  color: #F8F9FA !important;
   padding: 0.6rem 0.9rem !important;
   background: transparent !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stExpander"] summary:hover {
   background: rgba(255,255,255,0.06) !important;
 }
-/* 사이드바 expander 내부 텍스트 */
-section[data-testid="stSidebar"] div[data-testid="stExpander"] p,
-section[data-testid="stSidebar"] div[data-testid="stExpander"] label {
+section[data-testid="stSidebar"] div[data-testid="stExpander"] p {
+  color: #94a3b8 !important;
+}
+
+/* ─── 3-b. 사이드바 입력 위젯 — 가독성 수정 ─── */
+
+/* ① 위젯 라벨 → 밝은 흰색 (#F8F9FA) */
+section[data-testid="stSidebar"] div[data-testid="stTextInput"] > label,
+section[data-testid="stSidebar"] div[data-testid="stTextArea"] > label,
+section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > label,
+section[data-testid="stSidebar"] div[data-testid="stNumberInput"] > label,
+section[data-testid="stSidebar"] div[data-testid="stSlider"] > label,
+section[data-testid="stSidebar"] div[data-testid="stMultiSelect"] > label,
+section[data-testid="stSidebar"] div[data-testid="stDateInput"] > label,
+section[data-testid="stSidebar"] div[data-testid="stTimeInput"] > label {
+  color: #F8F9FA !important;
+  font-size: 0.82rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.03em !important;
+  text-transform: none !important;
+}
+
+/* ② 입력창 컨테이너 → 흰 배경 (가독성 최우선) */
+section[data-testid="stSidebar"] div[data-testid="stTextInput"] > div > div,
+section[data-testid="stSidebar"] div[data-testid="stTextArea"] > div > div,
+section[data-testid="stSidebar"] div[data-testid="stNumberInput"] > div > div {
+  background: #ffffff !important;
+  border: 1.5px solid rgba(255,255,255,0.25) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
+  transition: border-color 0.2s, box-shadow 0.2s !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stTextInput"] > div > div:focus-within,
+section[data-testid="stSidebar"] div[data-testid="stTextArea"] > div > div:focus-within,
+section[data-testid="stSidebar"] div[data-testid="stNumberInput"] > div > div:focus-within {
+  border-color: #7c3aed !important;
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.25) !important;
+}
+
+/* ③ 입력 텍스트 → 진한 흑회색 (#333333), 높은 명시도 셀렉터로 우선순위 확보 */
+section[data-testid="stSidebar"] div[data-testid="stTextInput"] > div > div input,
+section[data-testid="stSidebar"] div[data-testid="stTextArea"] > div > div textarea,
+section[data-testid="stSidebar"] div[data-testid="stNumberInput"] > div > div input {
+  color: #333333 !important;
+  background: transparent !important;
+  caret-color: #7c3aed !important;
+}
+
+/* ④ Placeholder → 중간 회색 (#888888) */
+section[data-testid="stSidebar"] div[data-testid="stTextInput"] > div > div input::placeholder,
+section[data-testid="stSidebar"] div[data-testid="stTextArea"] > div > div textarea::placeholder {
+  color: #888888 !important;
+}
+
+/* ⑤ Selectbox → 흰 배경 + 진한 텍스트 */
+section[data-testid="stSidebar"] div[data-baseweb="select"] > div:first-child {
+  background: #ffffff !important;
+  border: 1.5px solid rgba(255,255,255,0.25) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.25) !important;
+}
+section[data-testid="stSidebar"] div[data-baseweb="select"] span {
+  color: #333333 !important;
+}
+
+/* ⑥ 라디오 버튼 */
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
+  border-radius: 8px !important;
+  padding: 0.45rem 0.75rem !important;
+  transition: background 0.15s !important;
+  color: #cbd5e1 !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: #F8F9FA !important;
+}
+
+/* ⑦ 체크박스 label */
+section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label {
+  color: #cbd5e1 !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label:hover {
+  color: #F8F9FA !important;
+}
+
+/* ⑧ Caption */
+section[data-testid="stSidebar"] div[data-testid="stCaptionContainer"] p,
+section[data-testid="stSidebar"] small {
   color: #94a3b8 !important;
 }
 
@@ -283,9 +386,17 @@ div[data-baseweb="select"] > div:first-child {
   border: 1.5px solid #e2e8f0 !important;
   box-shadow: 0 1px 4px rgba(0,0,0,0.05) !important;
 }
-input[class], textarea[class] {
+/* 메인 영역 input/textarea 텍스트 — 사이드바 제외 */
+div[data-testid="stAppViewContainer"] div[data-testid="stTextInput"] input,
+div[data-testid="stAppViewContainer"] div[data-testid="stTextArea"] textarea,
+div[data-testid="stAppViewContainer"] div[data-testid="stNumberInput"] input {
   color: #1e293b !important;
   font-size: 0.9rem !important;
+  background: transparent !important;
+}
+div[data-testid="stAppViewContainer"] div[data-testid="stTextInput"] input::placeholder,
+div[data-testid="stAppViewContainer"] div[data-testid="stTextArea"] textarea::placeholder {
+  color: #9ca3af !important;
 }
 
 /* ─── 6. 버튼 — 킬러 스타일 ─── */
@@ -386,14 +497,47 @@ div[data-testid="block-container"] div[data-testid="stExpander"] summary:hover {
   background: #f8fafc !important;
 }
 
-/* ─── 8. Metric 카드 ─── */
-div[data-testid="metric-container"] {
+/* ─── 8. Metric — 통합 카드 (구분선 포함) ─── */
+/*
+ * :has() 로 metric-container 를 직접 자식으로 가진
+ * stHorizontalBlock 을 하나의 카드로 묶는다.
+ * Chrome 105+, Firefox 121+, Safari 15.4+ 지원.
+ */
+div[data-testid="block-container"]
+  div[data-testid="stHorizontalBlock"]:has(
+    > div[data-testid="stColumn"] > div[data-testid="metric-container"]
+  ) {
   background: #ffffff !important;
-  border-radius: 14px !important;
-  padding: 1.25rem 1.5rem !important;
+  border-radius: 16px !important;
   border: 1px solid #e2e8f0 !important;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.07) !important;
+  padding: 0.25rem 0 !important;
+  margin-bottom: 1.75rem !important;
+  overflow: hidden !important;
 }
+
+/* 개별 metric-container: 카드 배경 제거, 우측 구분선 추가 */
+div[data-testid="block-container"]
+  div[data-testid="stHorizontalBlock"]:has(
+    > div[data-testid="stColumn"] > div[data-testid="metric-container"]
+  )
+  div[data-testid="metric-container"] {
+  background: transparent !important;
+  border: none !important;
+  border-right: 1px solid #e2e8f0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 1.1rem 1.5rem !important;
+}
+/* 마지막 컬럼 구분선 제거 */
+div[data-testid="block-container"]
+  div[data-testid="stHorizontalBlock"]:has(
+    > div[data-testid="stColumn"] > div[data-testid="metric-container"]
+  )
+  > div[data-testid="stColumn"]:last-child div[data-testid="metric-container"] {
+  border-right: none !important;
+}
+
 div[data-testid="stMetricValue"] > div {
   font-size: 1.8rem !important;
   font-weight: 800 !important;
@@ -401,7 +545,7 @@ div[data-testid="stMetricValue"] > div {
   letter-spacing: -0.02em !important;
 }
 div[data-testid="stMetricLabel"] > div {
-  font-size: 0.775rem !important;
+  font-size: 0.75rem !important;
   font-weight: 600 !important;
   color: #64748b !important;
   text-transform: uppercase !important;
@@ -417,6 +561,7 @@ div[data-testid="stAlert"] {
   border-radius: 10px !important;
   border-left-width: 4px !important;
   font-size: 0.875rem !important;
+  margin-bottom: 1.5rem !important;
 }
 
 /* ─── 10. 데이터프레임 ─── */
@@ -504,6 +649,12 @@ span[data-testid="stBadge"] {
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
+# 쿠키에 유효한 토큰이 있으면 자동 복원
+if not st.session_state["authenticated"] and _COOKIES_OK:
+    if _cc.get(_COOKIE_NAME) == _auth_token():
+        st.session_state["authenticated"] = True
+        st.rerun()
+
 if not st.session_state["authenticated"]:
     st.markdown("""
     <style>
@@ -546,6 +697,8 @@ if not st.session_state["authenticated"]:
         if submitted:
             if uid == get_secret("APP_USER") and pw == get_secret("APP_PASSWORD"):
                 st.session_state["authenticated"] = True
+                if _COOKIES_OK:
+                    _cc.set(_COOKIE_NAME, _auth_token(), max_age=60 * 60 * 24 * 7)
                 st.rerun()
             else:
                 st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
@@ -569,6 +722,8 @@ for k, v in {
     "edited_content": "",
     "img_order": [],
     "last_upload_batch_id": "",
+    "mode_radio": "뉴스 자동 크롤링",
+    "kw_input": "",
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -599,6 +754,9 @@ def get_all_posts():
     return posts
 
 def get_images(folder: Path):
+    if not folder.exists() or not folder.is_dir():
+        return []
+
     order_file = folder / "image_order.txt"
     all_imgs = [f for f in folder.iterdir()
                 if f.is_file() and f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")]
@@ -623,6 +781,8 @@ def get_images(folder: Path):
 
 
 def load_img_order(post_dir: Path) -> list:
+    if not post_dir.exists() or not post_dir.is_dir():
+        return []
     return [str(p) for p in get_images(post_dir)]
 
 
@@ -854,6 +1014,14 @@ def run_generation(choice, input_data, persona, extra):
     proc.wait()
     yield None, result_dir
 
+@st.cache_data(ttl=1800)
+def _fetch_trends():
+    try:
+        from naver_news import get_trending_realestate_topics
+        return get_trending_realestate_topics(n=6)
+    except Exception:
+        return []
+
 # ══════════════════════════════════════════
 # 사이드바 — 마케팅 & 스타일 설정
 # ══════════════════════════════════════════
@@ -864,11 +1032,11 @@ with st.sidebar:
         mode = st.radio(
             "모드 선택",
             ["뉴스 자동 크롤링", "키워드 검색 뉴스", "자유 주제 기획"],
-            index=0,
+            key="mode_radio",
         )
         input_data = ""
         if mode == "키워드 검색 뉴스":
-            input_data = st.text_input("검색 키워드", placeholder="예: 마포 아파트 청약")
+            input_data = st.text_input("검색 키워드", key="kw_input", placeholder="예: 마포 아파트 청약")
         elif mode == "자유 주제 기획":
             input_data = st.text_input("기획 주제", placeholder="예: 수익형 상가 투자법")
 
@@ -913,6 +1081,8 @@ with st.sidebar:
     st.divider()
     if st.button("🔓 로그아웃", use_container_width=True):
         st.session_state["authenticated"] = False
+        if _COOKIES_OK:
+            _cc.remove(_COOKIE_NAME)
         st.rerun()
 
 # ══════════════════════════════════════════
@@ -952,6 +1122,37 @@ tab_editor, tab_image, tab_posts, tab_status = st.tabs(["📝 원고 에디터",
 # ─────────────────────────────────────────
 with tab_editor:
 
+    # ══ 섹션 0: 트렌드 추천 ══
+    with st.expander("📈 오늘의 부동산 트렌드 — 클릭하면 자동 적용", expanded=True):
+        c_ref, c_cap = st.columns([1, 4])
+        with c_ref:
+            if st.button("🔄 새로고침", key="refresh_trends"):
+                _fetch_trends.clear()
+                st.rerun()
+        with c_cap:
+            st.caption("네이버 부동산 인기 뉴스 기반 · 30분 자동 갱신 · 클릭 시 키워드 자동 입력")
+
+        trends = _fetch_trends()
+        if trends:
+            cols = st.columns(3)
+            for i, t in enumerate(trends):
+                with cols[i % 3]:
+                    label = t["title"]
+                    display = label[:28] + "…" if len(label) > 28 else label
+                    if st.button(
+                        f"📌 {display}",
+                        key=f"trend_btn_{i}",
+                        use_container_width=True,
+                        help=label,
+                    ):
+                        st.session_state["mode_radio"] = "키워드 검색 뉴스"
+                        st.session_state["kw_input"] = label[:60]
+                        st.rerun()
+        else:
+            st.info("트렌드를 불러올 수 없습니다. 🔄 새로고침을 눌러주세요.")
+
+    st.divider()
+
     # ══ 섹션 1: 원고 생성 ══
     st.subheader("1  AI 원고 자동 생성")
     col_btn, col_hint = st.columns([1, 2])
@@ -984,23 +1185,28 @@ with tab_editor:
             log_box.code("\n".join(logs), language=None)
 
             if done_dir:
-                raw = ""
-                cf = Path(done_dir) / "content.txt"
-                if cf.exists():
-                    raw = cf.read_text(encoding="utf-8")
-                    if cta_text.strip() and cta_text.strip() not in raw:
-                        raw = raw + "\n\n" + cta_text.strip()
+                done_path = Path(done_dir)
+                if done_path.exists() and done_path.is_dir():
+                    raw = ""
+                    cf = done_path / "content.txt"
+                    if cf.exists():
+                        raw = cf.read_text(encoding="utf-8")
+                        if cta_text.strip() and cta_text.strip() not in raw:
+                            raw = raw + "\n\n" + cta_text.strip()
 
-                st.session_state.update({
-                    "last_post_dir":   done_dir,
-                    "generation_done": True,
-                    "generation_logs": logs,
-                    "edited_content":  raw,
-                    "editor_post_key": done_dir,
-                    "img_order":       load_img_order(Path(done_dir)),
-                })
-                st.success(f"✅ 완료!  저장 위치: {done_dir}")
-                st.rerun()
+                    st.session_state.update({
+                        "last_post_dir":   done_dir,
+                        "generation_done": True,
+                        "generation_logs": logs,
+                        "edited_content":  raw,
+                        "editor_post_key": done_dir,
+                        "img_order":       load_img_order(done_path),
+                    })
+                    st.success(f"✅ 완료!  저장 위치: {done_dir}")
+                    st.rerun()
+                else:
+                    st.error(f"생성된 경로를 찾을 수 없습니다: {done_dir}")
+                    st.error("생성 중 오류가 발생했습니다. 생성 경로가 유효한지 확인해주세요.")
             else:
                 st.error("생성 중 오류가 발생했습니다. 위 로그를 확인해주세요.")
 
@@ -1161,10 +1367,11 @@ with tab_editor:
                 (post_dir / "content.txt").write_text(content_now, encoding="utf-8")
                 save_img_order(post_dir, st.session_state["img_order"])
 
-                with st.spinner("Supabase에 등록 중..."):
+                with st.spinner("Supabase에 등록 중... (이미지가 있으면 Storage 업로드 포함)"):
                     ok, msg = _supabase_push(
                         post_title, content_now, tags, post_dir.name,
                         scheduled_at=scheduled_at_val,
+                        image_paths=st.session_state.get("img_order") or [],
                     )
 
                 if ok:
@@ -1260,177 +1467,164 @@ with tab_editor:
 # Tab 2: 이미지 생성 / 수집
 # ─────────────────────────────────────────
 with tab_image:
-    leo_key = get_secret("LEONARDO_API_KEY")
-
     gen_mode = st.radio(
         "방식 선택",
-        ["🤖 AI 이미지 생성 (Leonardo)", "📰 뉴스·URL에서 이미지 수집", "🖼️ 업로드 이미지 기반 생성"],
+        ["🤖 AI 이미지 생성 (Pollinations · 무료)", "📰 뉴스·URL에서 이미지 수집",
+         "🖼️ 업로드 이미지 기반 생성", "📁 이미지 직접 업로드"],
         horizontal=True,
     )
     st.divider()
 
-    # ══ 모드 1: AI 이미지 생성 ══
-    if gen_mode == "🤖 AI 이미지 생성 (Leonardo)":
-            if not leo_key:
-                st.error("❌ LEONARDO_API_KEY가 없습니다. .env 파일 또는 Streamlit Secrets에 추가하세요.")
-            else:
-                posts = get_all_posts()
-                if not posts:
-                    st.info("먼저 '원고 에디터' 탭에서 포스트를 생성해주세요.")
-                else:
-                    col_sel, col_cnt, col_over = st.columns([3, 1, 1])
-                    with col_sel:
-                        labels  = [f"[{p['date']}]  {p['title']}" for p in posts]
-                        sel_idx = st.selectbox("포스트 선택", range(len(posts)),
-                                               format_func=lambda i: labels[i], key="img_post_sel")
-                    with col_cnt:
-                        num_per_prompt = st.number_input("장 수 (프롬프트당)", min_value=1, max_value=4, value=1,
-                                                          help="프롬프트 1개당 생성할 이미지 수")
-                    with col_over:
-                        overwrite = st.checkbox("기존 덮어쓰기", value=False)
+    # ══ 모드 1: AI 이미지 생성 (Pollinations) ══
+    if gen_mode == "🤖 AI 이미지 생성 (Pollinations · 무료)":
+        import urllib.parse as _urlparse
+        import warnings as _warnings
+        _warnings.filterwarnings("ignore")
 
-                    post_dir     = posts[sel_idx]["dir"]
-                    prompts_file = post_dir / "prompts.txt"
+        posts = get_all_posts()
+        if not posts:
+            st.info("먼저 '원고 에디터' 탭에서 포스트를 생성해주세요.")
+        else:
+            col_sel, col_over = st.columns([4, 1])
+            with col_sel:
+                labels  = [f"[{p['date']}]  {p['title']}" for p in posts]
+                sel_idx = st.selectbox("포스트 선택", range(len(posts)),
+                                       format_func=lambda i: labels[i], key="img_post_sel")
+            with col_over:
+                overwrite = st.checkbox("기존 덮어쓰기", value=False)
 
-                    # 기존 prompts.txt 내용 로드 (없으면 빈 문자열)
-                    default_prompts = prompts_file.read_text(encoding="utf-8").strip() \
-                                      if prompts_file.exists() else ""
+            post_dir     = posts[sel_idx]["dir"]
+            prompts_file = post_dir / "prompts.txt"
 
-                    prompt_key = f"img_prompts_{sel_idx}"
-                    if prompt_key not in st.session_state:
-                        st.session_state[prompt_key] = default_prompts
+            default_prompts = prompts_file.read_text(encoding="utf-8").strip() \
+                              if prompts_file.exists() else ""
 
-                    # 자동 추출 / 초기화 버튼
-                    col_auto, col_reset = st.columns([1, 1])
-                    with col_auto:
-                        if st.button("🤖 원고에서 자동 추출 (Gemini)", use_container_width=True,
-                                     key="auto_prompts_btn"):
-                            content_file = post_dir / "content.txt"
-                            if content_file.exists():
-                                with st.spinner("Gemini로 이미지 프롬프트 생성 중..."):
-                                    auto_p = _auto_generate_prompts(
-                                        content_file.read_text(encoding="utf-8"),
-                                        get_secret("GEMINI_API_KEY"),
-                                    )
-                                    st.session_state[prompt_key] = "\n".join(auto_p)
-                                st.rerun()
-                            else:
-                                st.warning("content.txt 파일이 없습니다.")
-                    with col_reset:
-                        if st.button("↩ 원래대로", use_container_width=True, key="reset_prompts_btn"):
-                            st.session_state[prompt_key] = default_prompts
-                            st.rerun()
+            prompt_key = f"img_prompts_{sel_idx}"
+            if prompt_key not in st.session_state:
+                st.session_state[prompt_key] = default_prompts
 
-                    # 프롬프트 편집 텍스트 영역 (한 줄 = 이미지 1장)
-                    st.markdown("**프롬프트 목록** — 한 줄에 하나씩 입력하세요 (한국어/영어 모두 가능)")
-                    prompt_text = st.text_area(
-                        "prompts",
-                        value=st.session_state[prompt_key],
-                        height=210,
-                        label_visibility="collapsed",
-                        placeholder="예시:\nModern Korean luxury apartment complex, aerial view, golden hour lighting, photorealistic\n서울 강남 아파트 단지 야경, 도심 뷰\nKorean apartment interior, minimalist living room, natural sunlight",
-                        key=f"prompt_area_{sel_idx}",
-                    )
-                    st.session_state[prompt_key] = prompt_text
-
-                    col_save_p, col_spacer = st.columns([1, 3])
-                    with col_save_p:
-                        if st.button("💾 프롬프트 저장", use_container_width=True, key="save_prompts_btn"):
-                            prompts_file.write_text(prompt_text, encoding="utf-8")
-                            st.toast("프롬프트 저장됐습니다 ✅")
-
-                    prompt_lines = [l.strip() for l in prompt_text.splitlines() if l.strip()]
-                    total_imgs   = len(prompt_lines) * int(num_per_prompt)
-
-                    col_btn, col_info = st.columns([1, 2])
-                    with col_btn:
-                        gen_btn = st.button(
-                            f"🚀 이미지 생성 ({total_imgs}장)",
-                            type="primary",
-                            disabled=(len(prompt_lines) == 0),
-                            use_container_width=True,
-                            key="leo_gen_btn",
-                        )
-                    with col_info:
-                        st.info(f"프롬프트 **{len(prompt_lines)}개** × **{int(num_per_prompt)}장** = 총 **{total_imgs}장**  ·  장당 약 30~60초")
-
-                    if gen_btn and prompt_lines:
-                        from leonardo_generator import generate_text_to_image, poll_until_complete, download_image
-
-                        progress_bar = st.progress(0)
-                        status_txt   = st.empty()
-                        done_paths: list = []
-
-                        # 기존 이미지 번호 다음부터 슬롯 배정
-                        existing_nums = [int(f.stem) for f in post_dir.iterdir()
-                                         if f.is_file() and f.stem.isdigit()
-                                         and f.suffix.lower() in (".jpg", ".png", ".jpeg", ".webp")]
-                        next_slot = max(existing_nums, default=0) + 1
-
-                        for count, raw_line in enumerate(prompt_lines):
-                            # "N. prompt" 형식이면 N을 슬롯으로, 아니면 순서대로
-                            num_match = re.match(r"^(\d+)[\.\)]\s*", raw_line)
-                            if num_match:
-                                slot = int(num_match.group(1))
-                                clean_prompt = re.sub(r"^\d+[\.\)]\s*", "", raw_line).strip()
-                            else:
-                                slot = next_slot + count
-                                clean_prompt = raw_line
-
-                            status_txt.write(f"⏳ [{count+1}/{len(prompt_lines)}] 슬롯 {slot} 생성 중...")
-
-                            try:
-                                gen_id = generate_text_to_image(
-                                    clean_prompt, leo_key, num_images=int(num_per_prompt)
-                                )
-                                tick_txt = st.empty()
-                                def on_tick(elapsed, _t=tick_txt, _s=slot):
-                                    _t.caption(f"  대기 중... {elapsed}초 경과 (슬롯 {_s})")
-                                urls = poll_until_complete(gen_id, leo_key, on_tick=on_tick)
-                                tick_txt.empty()
-
-                                if urls:
-                                    for i, url in enumerate(urls):
-                                        fname = f"{slot}.jpg" if len(urls) == 1 else f"{slot}_{i+1}.jpg"
-                                        sp = post_dir / fname
-                                        if not sp.exists() or overwrite:
-                                            if download_image(url, str(sp)):
-                                                done_paths.append(sp)
-                                    status_txt.success(f"✅ [{count+1}/{len(prompt_lines)}] {len(urls)}장 저장")
-                                else:
-                                    status_txt.warning(f"⚠ [{count+1}/{len(prompt_lines)}] 슬롯 {slot} 실패")
-                            except Exception as e:
-                                status_txt.error(f"[{count+1}] 오류: {e}")
-
-                            progress_bar.progress((count + 1) / len(prompt_lines))
-
-                        status_txt.success(f"🎉 완료! {len(done_paths)}장 저장됨 → {post_dir}")
-                        st.session_state[f"leo_gallery_{sel_idx}"] = [str(p) for p in done_paths]
+            col_auto, col_reset = st.columns([1, 1])
+            with col_auto:
+                if st.button("🤖 원고에서 자동 추출 (Gemini)", use_container_width=True,
+                             key="auto_prompts_btn"):
+                    content_file = post_dir / "content.txt"
+                    if content_file.exists():
+                        with st.spinner("Gemini로 이미지 프롬프트 생성 중..."):
+                            auto_p = _auto_generate_prompts(
+                                content_file.read_text(encoding="utf-8"),
+                                get_secret("GEMINI_API_KEY"),
+                            )
+                            st.session_state[prompt_key] = "\n".join(auto_p)
                         st.rerun()
+                    else:
+                        st.warning("content.txt 파일이 없습니다.")
+            with col_reset:
+                if st.button("↩ 원래대로", use_container_width=True, key="reset_prompts_btn"):
+                    st.session_state[prompt_key] = default_prompts
+                    st.rerun()
 
-                    # ── 생성된 이미지 갤러리 (삭제 버튼 포함) ──
-                    gallery_key = f"leo_gallery_{sel_idx}"
-                    if gallery_key in st.session_state and st.session_state[gallery_key]:
-                        valid = [p for p in st.session_state[gallery_key] if Path(p).exists()]
-                        if valid:
-                            st.divider()
-                            st.markdown(f"**방금 생성된 이미지 ({len(valid)}장)**  —  🗑 버튼으로 개별 삭제")
-                            GCOLS = 5
-                            for row_s in range(0, len(valid), GCOLS):
-                                row_imgs = valid[row_s:row_s + GCOLS]
-                                cols = st.columns(GCOLS)
-                                for j, img_path in enumerate(row_imgs):
-                                    with cols[j]:
-                                        try:
-                                            st.image(img_path, use_container_width=True)
-                                        except Exception:
-                                            st.write("⚠")
-                                        st.caption(Path(img_path).name)
-                                        if st.button("🗑", key=f"del_g_{row_s+j}",
-                                                     use_container_width=True):
-                                            Path(img_path).unlink(missing_ok=True)
-                                            st.session_state[gallery_key].remove(img_path)
-                                            st.rerun()
+            st.markdown("**프롬프트 목록** — 한 줄에 하나씩 입력하세요 (한국어/영어 모두 가능)")
+            prompt_text = st.text_area(
+                "prompts",
+                value=st.session_state[prompt_key],
+                height=210,
+                label_visibility="collapsed",
+                placeholder="예시:\nModern Korean luxury apartment complex, aerial view, golden hour lighting, photorealistic\n서울 강남 아파트 단지 야경, 도심 뷰\nKorean apartment interior, minimalist living room, natural sunlight",
+                key=f"prompt_area_{sel_idx}",
+            )
+            st.session_state[prompt_key] = prompt_text
+
+            col_save_p, col_spacer = st.columns([1, 3])
+            with col_save_p:
+                if st.button("💾 프롬프트 저장", use_container_width=True, key="save_prompts_btn"):
+                    prompts_file.write_text(prompt_text, encoding="utf-8")
+                    st.toast("프롬프트 저장됐습니다 ✅")
+
+            prompt_lines = [l.strip() for l in prompt_text.splitlines() if l.strip()]
+
+            col_btn, col_info = st.columns([1, 2])
+            with col_btn:
+                gen_btn = st.button(
+                    f"🚀 이미지 생성 ({len(prompt_lines)}장)",
+                    type="primary",
+                    disabled=(len(prompt_lines) == 0),
+                    use_container_width=True,
+                    key="poll_gen_btn",
+                )
+            with col_info:
+                st.info(f"프롬프트 **{len(prompt_lines)}개** = **{len(prompt_lines)}장**  ·  장당 약 10~30초  🆓 API 키 불필요")
+
+            if gen_btn and prompt_lines:
+                progress_bar = st.progress(0)
+                status_txt   = st.empty()
+                done_paths: list = []
+
+                existing_nums = [int(f.stem) for f in post_dir.iterdir()
+                                 if f.is_file() and f.stem.isdigit()
+                                 and f.suffix.lower() in (".jpg", ".png", ".jpeg", ".webp")]
+                next_slot = max(existing_nums, default=0) + 1
+
+                _headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+                for count, raw_line in enumerate(prompt_lines):
+                    num_match = re.match(r"^(\d+)[\.\)]\s*", raw_line)
+                    if num_match:
+                        slot = int(num_match.group(1))
+                        clean_prompt = re.sub(r"^\d+[\.\)]\s*", "", raw_line).strip()
+                    else:
+                        slot = next_slot + count
+                        clean_prompt = raw_line
+
+                    sp = post_dir / f"{slot}.jpg"
+                    if sp.exists() and not overwrite:
+                        status_txt.info(f"⏭ [{count+1}/{len(prompt_lines)}] 슬롯 {slot} 이미 존재 — 건너뜀")
+                        progress_bar.progress((count + 1) / len(prompt_lines))
+                        continue
+
+                    status_txt.write(f"⏳ [{count+1}/{len(prompt_lines)}] 슬롯 {slot} 생성 중...")
+                    try:
+                        encoded = _urlparse.quote(clean_prompt)
+                        url = (
+                            f"https://image.pollinations.ai/prompt/{encoded}"
+                            f"?width=1024&height=1024&nologo=true&model=flux-realism&seed={slot}"
+                        )
+                        resp = requests.get(url, timeout=90, verify=False, headers=_headers)
+                        resp.raise_for_status()
+                        sp.write_bytes(resp.content)
+                        done_paths.append(str(sp))
+                        status_txt.success(f"✅ [{count+1}/{len(prompt_lines)}] 슬롯 {slot} 저장")
+                    except Exception as e:
+                        status_txt.error(f"[{count+1}] 오류: {e}")
+
+                    progress_bar.progress((count + 1) / len(prompt_lines))
+
+                status_txt.success(f"🎉 완료! {len(done_paths)}장 저장됨 → {post_dir}")
+                st.session_state[f"poll_gallery_{sel_idx}"] = done_paths
+                st.rerun()
+
+            # ── 생성된 이미지 갤러리 ──
+            gallery_key = f"poll_gallery_{sel_idx}"
+            if gallery_key in st.session_state and st.session_state[gallery_key]:
+                valid = [p for p in st.session_state[gallery_key] if Path(p).exists()]
+                if valid:
+                    st.divider()
+                    st.markdown(f"**방금 생성된 이미지 ({len(valid)}장)**  —  🗑 버튼으로 개별 삭제")
+                    GCOLS = 5
+                    for row_s in range(0, len(valid), GCOLS):
+                        row_imgs = valid[row_s:row_s + GCOLS]
+                        cols = st.columns(GCOLS)
+                        for j, img_path in enumerate(row_imgs):
+                            with cols[j]:
+                                try:
+                                    st.image(img_path, use_container_width=True)
+                                except Exception:
+                                    st.write("⚠")
+                                st.caption(Path(img_path).name)
+                                if st.button("🗑", key=f"del_g_{row_s+j}",
+                                             use_container_width=True):
+                                    Path(img_path).unlink(missing_ok=True)
+                                    st.session_state[gallery_key].remove(img_path)
+                                    st.rerun()
 
     # ══ 모드 2: 뉴스·URL에서 이미지 수집 ══
     elif gen_mode == "📰 뉴스·URL에서 이미지 수집":
@@ -1518,7 +1712,7 @@ with tab_image:
                     st.warning("이미지를 찾지 못했습니다. 키워드를 바꿔보세요.")
 
     # ══ 모드 3: 업로드 이미지 기반 생성 ══
-    else:
+    elif gen_mode == "🖼️ 업로드 이미지 기반 생성":
         if not leo_key:
             st.error("❌ LEONARDO_API_KEY가 없습니다.")
         else:
@@ -1617,6 +1811,155 @@ with tab_image:
                         status_u.error("이미지 생성에 실패했습니다. 프롬프트나 API 키를 확인하세요.")
                 except Exception as e:
                     status_u.error(f"오류 발생: {e}")
+
+    # ══ 모드 4: 이미지 직접 업로드 ══
+    elif gen_mode == "📁 이미지 직접 업로드":
+
+        # ── 드래그&드롭 업로드 영역 CSS ──
+        st.markdown("""
+<style>
+/* 업로드 드롭존 강조 */
+section[data-testid="stFileUploadDropzone"] {
+  border: 2.5px dashed #7c3aed !important;
+  border-radius: 16px !important;
+  background: linear-gradient(135deg, rgba(124,58,237,0.04) 0%, rgba(79,70,229,0.04) 100%) !important;
+  padding: 2rem 1.5rem !important;
+  transition: border-color 0.2s, background 0.2s !important;
+  min-height: 160px !important;
+}
+section[data-testid="stFileUploadDropzone"]:hover,
+section[data-testid="stFileUploadDropzone"]:focus-within {
+  border-color: #4f46e5 !important;
+  background: rgba(124,58,237,0.08) !important;
+}
+section[data-testid="stFileUploadDropzone"] span {
+  font-size: 0.95rem !important;
+  color: #6d28d9 !important;
+  font-weight: 600 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+        st.markdown("""
+<div style="margin-bottom:0.75rem;">
+  <span style="font-size:1.05rem; font-weight:700; color:#1e293b;">이미지를 드래그하거나 클릭해서 선택하세요</span><br>
+  <span style="font-size:0.82rem; color:#64748b;">JPG · PNG · WEBP · GIF · 여러 파일 동시 선택 가능</span>
+</div>
+""", unsafe_allow_html=True)
+
+        # ── 포스트 폴더 & 옵션 선택 ──
+        col_dst, col_opt = st.columns([3, 1])
+        with col_dst:
+            posts_d   = get_all_posts()
+            save_opts_d = ["📁 새 폴더 (오늘 날짜)"] + [f"[{p['date']}] {p['title']}" for p in posts_d]
+            save_sel_d  = st.selectbox("저장할 포스트 폴더", save_opts_d, key="direct_save_sel")
+        with col_opt:
+            start_num_d = st.number_input(
+                "시작 번호",
+                min_value=1, max_value=999, value=1,
+                help="자동 번호 매기기의 시작 번호 (기존 이미지가 있으면 자동으로 이어받음)",
+                key="direct_start_num",
+            )
+
+        if save_sel_d == "📁 새 폴더 (오늘 날짜)":
+            td_d       = datetime.datetime.now().strftime("%Y-%m-%d")
+            save_dir_d = POSTS_DIR / td_d / "direct_upload"
+        else:
+            pidx_d     = save_opts_d.index(save_sel_d) - 1
+            save_dir_d = posts_d[pidx_d]["dir"]
+
+        # 기존 이미지 번호 자동 감지
+        existing_d = sorted(
+            [int(f.stem) for f in save_dir_d.iterdir()
+             if save_dir_d.exists() and f.is_file()
+             and f.stem.isdigit() and f.suffix.lower() in (".jpg", ".png", ".jpeg", ".webp", ".gif")],
+        ) if save_dir_d.exists() else []
+        auto_next = max(existing_d, default=0) + 1
+        if auto_next > start_num_d:
+            st.caption(f"ℹ️ 폴더에 이미 {len(existing_d)}장 있음 → **{auto_next}번**부터 저장됩니다.")
+            effective_start = auto_next
+        else:
+            effective_start = int(start_num_d)
+
+        # ── 다중 파일 업로더 (드래그&드롭 지원) ──
+        uploaded_files = st.file_uploader(
+            "이미지 파일 선택 (여러 개 가능 · 드래그&드롭 지원)",
+            type=["jpg", "jpeg", "png", "webp", "gif"],
+            accept_multiple_files=True,
+            key="direct_multi_uploader",
+        )
+
+        if uploaded_files:
+            st.markdown(f"**선택된 파일 {len(uploaded_files)}장** — 아래에서 확인 후 저장 버튼을 누르세요.")
+
+            # ── 미리보기 그리드 ──
+            PREV_COLS = 5
+            for row_s in range(0, len(uploaded_files), PREV_COLS):
+                row_files = uploaded_files[row_s : row_s + PREV_COLS]
+                cols_p    = st.columns(PREV_COLS)
+                for j, uf in enumerate(row_files):
+                    with cols_p[j]:
+                        try:
+                            st.image(uf, use_container_width=True)
+                        except Exception:
+                            st.write("⚠")
+                        target_num = effective_start + row_s + j
+                        st.caption(f"{uf.name}\n→ **{target_num}.{uf.name.rsplit('.',1)[-1].lower()}**")
+
+            st.divider()
+
+            col_save_d, col_info_d = st.columns([1, 2])
+            with col_info_d:
+                st.info(
+                    f"📁 저장 위치: `{save_dir_d}`  \n"
+                    f"📷 {len(uploaded_files)}장 → **{effective_start}** ~ **{effective_start + len(uploaded_files) - 1}** 번으로 저장"
+                )
+            with col_save_d:
+                if st.button(
+                    f"💾 {len(uploaded_files)}장 저장",
+                    type="primary",
+                    use_container_width=True,
+                    key="direct_save_btn",
+                ):
+                    save_dir_d.mkdir(parents=True, exist_ok=True)
+                    saved_d, failed_d = [], []
+                    prog_d = st.progress(0)
+
+                    for idx_d, uf in enumerate(uploaded_files):
+                        ext_d    = uf.name.rsplit(".", 1)[-1].lower()
+                        fname_d  = f"{effective_start + idx_d}.{ext_d}"
+                        dest_d   = save_dir_d / fname_d
+                        try:
+                            dest_d.write_bytes(uf.getvalue())
+                            saved_d.append(fname_d)
+                        except Exception as e_d:
+                            failed_d.append(f"{uf.name} ({e_d})")
+                        prog_d.progress((idx_d + 1) / len(uploaded_files))
+
+                    if saved_d:
+                        st.success(
+                            f"✅ **{len(saved_d)}장** 저장 완료!  \n"
+                            f"📁 `{save_dir_d}`  \n"
+                            f"파일: {', '.join(saved_d[:8])}{'...' if len(saved_d) > 8 else ''}"
+                        )
+                        # image_order.txt 갱신
+                        all_imgs_d = sorted(
+                            [f.name for f in save_dir_d.iterdir()
+                             if f.is_file() and f.suffix.lower() in (".jpg", ".png", ".jpeg", ".webp", ".gif")],
+                            key=lambda n: int(n.rsplit(".", 1)[0]) if n.rsplit(".", 1)[0].isdigit() else 999,
+                        )
+                        (save_dir_d / "image_order.txt").write_text(
+                            "\n".join(all_imgs_d), encoding="utf-8"
+                        )
+                    if failed_d:
+                        st.error(f"❌ 실패: {', '.join(failed_d)}")
+
+        else:
+            # 업로드 전 — 현재 폴더 상황 표시
+            if save_dir_d.exists() and existing_d:
+                st.caption(f"현재 폴더에 이미지 {len(existing_d)}장 있음 ({existing_d[0]}번 ~ {existing_d[-1]}번)")
+            else:
+                st.caption("아직 이미지가 없습니다. 위 업로드 영역에 파일을 끌어다 놓거나 클릭해서 선택하세요.")
 
 
 # ─────────────────────────────────────────

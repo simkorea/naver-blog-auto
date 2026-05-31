@@ -91,6 +91,56 @@ def get_news_by_keyword(keyword):
         return None, None, None
 
 
+def get_trending_realestate_topics(n=6):
+    """
+    네이버 뉴스 경제 섹션 랭킹에서 부동산 관련 인기 뉴스 제목 목록을 반환합니다.
+    Returns: list of dict {title, url}
+    """
+    REALESTATE_KW = [
+        "아파트", "부동산", "청약", "분양", "주택", "전세", "월세",
+        "재건축", "재개발", "임대", "매매", "공급", "입주", "단지",
+        "금리", "대출", "규제", "상가", "오피스텔",
+    ]
+    results = []
+
+    try:
+        resp = requests.get(
+            "https://news.naver.com/main/ranking/popularDay.naver?sectionId=101",
+            headers=HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for link in soup.select(".rankingnews_list .list_content a"):
+            title = link.get_text(strip=True)
+            if title and any(kw in title for kw in REALESTATE_KW):
+                results.append({"title": title, "url": link.get("href", "")})
+            if len(results) >= n:
+                break
+    except Exception:
+        pass
+
+    search_queries = ["아파트 청약", "부동산 전세", "재건축 분양", "주택 대출"]
+    for q in search_queries:
+        if len(results) >= n:
+            break
+        try:
+            resp = requests.get(
+                f"https://search.naver.com/search.naver?where=news&query={q}&sort=1",
+                headers=HEADERS, timeout=10,
+            )
+            for m in re.finditer(r'class="news_tit"[^>]*title="([^"]+)"', resp.text):
+                title = m.group(1).strip()
+                if title and any(kw in title for kw in REALESTATE_KW):
+                    if not any(r["title"] == title for r in results):
+                        results.append({"title": title, "url": ""})
+                if len(results) >= n:
+                    break
+        except Exception:
+            continue
+
+    return results[:n]
+
+
 if __name__ == "__main__":
     title, content, url = get_top_real_estate_news()
     if title:
