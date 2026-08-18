@@ -1,11 +1,9 @@
 import hashlib
-import io
 import os
 import re
 import sys
 import subprocess
 import datetime
-import zipfile
 from pathlib import Path
 
 import streamlit as st
@@ -18,9 +16,10 @@ def _supabase_push(
     image_paths: list | None = None,
 ) -> tuple[bool, str]:
     url = get_secret("SUPABASE_URL")
-    key = get_secret("SUPABASE_KEY")
+    # post_queue 는 anon(public) 역할 접근을 막아뒀으므로 RLS를 우회하는 service_role 키를 사용합니다.
+    key = get_secret("SUPABASE_SERVICE_ROLE_KEY")
     if not url or not key:
-        return False, "SUPABASE_URL 또는 SUPABASE_KEY 가 secrets에 없습니다."
+        return False, "SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY 가 secrets에 없습니다."
     try:
         from supabase_db import push_pending, upload_images_to_storage
         image_urls: list[str] = []
@@ -33,7 +32,7 @@ def _supabase_push(
 
 def _supabase_all_rows() -> list[dict]:
     url = get_secret("SUPABASE_URL")
-    key = get_secret("SUPABASE_KEY")
+    key = get_secret("SUPABASE_SERVICE_ROLE_KEY")
     if not url or not key:
         return []
     try:
@@ -95,14 +94,8 @@ except Exception:
 # ─────────────────────────────────────────────────────────────
 
 
-def make_zip(post_dir: Path) -> bytes:
-    """포스트 폴더 전체를 ZIP으로 묶어 bytes로 반환합니다."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for f in sorted(post_dir.iterdir()):
-            if f.is_file():
-                zf.write(f, f.name)
-    return buf.getvalue()
+# ZIP 묶기도 post_utils 로 옮겼습니다.
+from post_utils import make_zip  # noqa: E402
 
 
 # ── 경로 설정 ──
@@ -121,527 +114,10 @@ st.set_page_config(
 # ══════════════════════════════════════════
 # GLOBAL CSS — B2B SaaS 스타일 (Crypee급)
 # ══════════════════════════════════════════
-st.markdown("""
-<style>
-/* ─── 0. Pretendard 웹폰트 ─── */
-@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
+# 전역 스타일 — dashboard_style.py 로 분리했습니다.
+from dashboard_style import inject_css
 
-/*
- * ── 폰트 전략 ──────────────────────────────────────────
- *  1. html/body 에 Pretendard 기본값 (느슨하게: !important 없음)
- *     → 대부분의 텍스트는 여기서 상속
- *  2. 확실히 텍스트만 담는 요소에만 !important 사용
- *     → span / label / a / button 전체 타겟 절대 금지
- *        (Material Symbols ligature 스팬이 포함되기 때문)
- *  3. 아이콘 요소에는 실제 폰트명을 명시적으로 복원
- *     → inherit 금지 (부모가 이미 Pretendard면 무의미)
- * ────────────────────────────────────────────────────── */
-html, body {
-  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
-               'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
-}
-
-/* 순수 텍스트 컨테이너에만 !important */
-input, textarea, select,
-p, h1, h2, h3, h4, h5, h6,
-li, td, th, caption,
-div[data-testid="stMarkdownContainer"],
-div[data-testid="stText"],
-button[data-baseweb="tab"] {
-  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
-               'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif !important;
-}
-
-/* ── 아이콘 폰트 명시적 복원 ───────────────────────────
- * Streamlit 1.28+ : Material Symbols Rounded
- * 구버전           : Material Icons
- * inherit 사용 금지 → 부모가 Pretendard면 그대로 상속됨
- * ─────────────────────────────────────────────────── */
-i,
-[aria-hidden="true"],
-span[class*="material"],
-span[class*="symbol"],
-section[data-testid="stSidebar"] button span,
-section[data-testid="stSidebar"] summary > span,
-details > summary > span:first-child,
-details > summary > span:last-child,
-button[data-testid="baseButton-headerNoPadding"] span,
-button[data-testid="collapsedControl"] span,
-button[data-testid="expandedControl"] span {
-  font-family: 'Material Symbols Rounded', 'Material Icons',
-               'Material Icons Outlined', 'Material Symbols Outlined',
-               serif !important;
-}
-
-/* ─── 1. Streamlit 브랜딩 완전 제거 ─── */
-#MainMenu                                    { display: none !important; }
-header[data-testid="stHeader"]               { display: none !important; }
-footer                                       { display: none !important; }
-div[data-testid="stToolbar"]                 { display: none !important; }
-div[data-testid="stBottom"]                  { display: none !important; }
-button[data-testid="baseButton-header"]      { display: none !important; }
-.stDeployButton                              { display: none !important; }
-div[data-testid="stDecoration"]              { display: none !important; }
-
-/* ─── 2. 앱 배경 & 여백 ─── */
-div[data-testid="stAppViewContainer"] {
-  background: #f0f2f8 !important;
-}
-div[data-testid="block-container"] {
-  padding: 2.75rem 2.5rem 3.5rem !important;
-  max-width: 1440px !important;
-}
-/* 페이지 타이틀 아래 여백 */
-div[data-testid="block-container"] h1:first-of-type {
-  margin-bottom: 1.25rem !important;
-}
-/* 안내 박스(info/warning) 아래 여백 */
-div[data-testid="stAlert"] {
-  margin-bottom: 1.5rem !important;
-}
-
-/* ─── 3. 사이드바 — 다크 네이비 ─── */
-section[data-testid="stSidebar"] {
-  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%) !important;
-  border-right: 1px solid rgba(255,255,255,0.06) !important;
-}
-section[data-testid="stSidebar"] > div:first-child {
-  padding-top: 1.5rem !important;
-}
-
-/* 사이드바 기본 텍스트 — p는 서브텍스트, h는 섹션 타이틀 */
-section[data-testid="stSidebar"] p             { color: #94a3b8 !important; }
-section[data-testid="stSidebar"] h1,
-section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3            { color: #F8F9FA !important; }
-section[data-testid="stSidebar"] hr            { border-color: rgba(255,255,255,0.1) !important; }
-
-/* 사이드바 Expander */
-section[data-testid="stSidebar"] div[data-testid="stExpander"] {
-  background: transparent !important;
-  border: 1px solid rgba(255,255,255,0.1) !important;
-  box-shadow: none !important;
-  border-radius: 8px !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stExpander"] summary {
-  color: #F8F9FA !important;
-  padding: 0.6rem 0.9rem !important;
-  background: transparent !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stExpander"] summary:hover {
-  background: rgba(255,255,255,0.06) !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stExpander"] p {
-  color: #94a3b8 !important;
-}
-
-/* ─── 3-b. 사이드바 입력 위젯 — 가독성 수정 ─── */
-
-/* ① 위젯 라벨 → 밝은 흰색 (#F8F9FA) */
-section[data-testid="stSidebar"] div[data-testid="stTextInput"] > label,
-section[data-testid="stSidebar"] div[data-testid="stTextArea"] > label,
-section[data-testid="stSidebar"] div[data-testid="stSelectbox"] > label,
-section[data-testid="stSidebar"] div[data-testid="stNumberInput"] > label,
-section[data-testid="stSidebar"] div[data-testid="stSlider"] > label,
-section[data-testid="stSidebar"] div[data-testid="stMultiSelect"] > label,
-section[data-testid="stSidebar"] div[data-testid="stDateInput"] > label,
-section[data-testid="stSidebar"] div[data-testid="stTimeInput"] > label {
-  color: #F8F9FA !important;
-  font-size: 0.82rem !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.03em !important;
-  text-transform: none !important;
-}
-
-/* ② 입력창 컨테이너 → 흰 배경 (가독성 최우선) */
-section[data-testid="stSidebar"] div[data-testid="stTextInput"] > div > div,
-section[data-testid="stSidebar"] div[data-testid="stTextArea"] > div > div,
-section[data-testid="stSidebar"] div[data-testid="stNumberInput"] > div > div {
-  background: #ffffff !important;
-  border: 1.5px solid rgba(255,255,255,0.25) !important;
-  border-radius: 8px !important;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
-  transition: border-color 0.2s, box-shadow 0.2s !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stTextInput"] > div > div:focus-within,
-section[data-testid="stSidebar"] div[data-testid="stTextArea"] > div > div:focus-within,
-section[data-testid="stSidebar"] div[data-testid="stNumberInput"] > div > div:focus-within {
-  border-color: #7c3aed !important;
-  box-shadow: 0 0 0 3px rgba(124,58,237,0.25) !important;
-}
-
-/* ③ 입력 텍스트 → 진한 흑회색 (#333333), 높은 명시도 셀렉터로 우선순위 확보 */
-section[data-testid="stSidebar"] div[data-testid="stTextInput"] > div > div input,
-section[data-testid="stSidebar"] div[data-testid="stTextArea"] > div > div textarea,
-section[data-testid="stSidebar"] div[data-testid="stNumberInput"] > div > div input {
-  color: #333333 !important;
-  background: transparent !important;
-  caret-color: #7c3aed !important;
-}
-
-/* ④ Placeholder → 중간 회색 (#888888) */
-section[data-testid="stSidebar"] div[data-testid="stTextInput"] > div > div input::placeholder,
-section[data-testid="stSidebar"] div[data-testid="stTextArea"] > div > div textarea::placeholder {
-  color: #888888 !important;
-}
-
-/* ⑤ Selectbox → 흰 배경 + 진한 텍스트 */
-section[data-testid="stSidebar"] div[data-baseweb="select"] > div:first-child {
-  background: #ffffff !important;
-  border: 1.5px solid rgba(255,255,255,0.25) !important;
-  border-radius: 8px !important;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.25) !important;
-}
-section[data-testid="stSidebar"] div[data-baseweb="select"] span {
-  color: #333333 !important;
-}
-
-/* ⑥ 라디오 버튼 */
-section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
-  border-radius: 8px !important;
-  padding: 0.45rem 0.75rem !important;
-  transition: background 0.15s !important;
-  color: #cbd5e1 !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover {
-  background: rgba(255,255,255,0.08) !important;
-  color: #F8F9FA !important;
-}
-
-/* ⑦ 체크박스 label */
-section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label {
-  color: #cbd5e1 !important;
-}
-section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label:hover {
-  color: #F8F9FA !important;
-}
-
-/* ⑧ Caption */
-section[data-testid="stSidebar"] div[data-testid="stCaptionContainer"] p,
-section[data-testid="stSidebar"] small {
-  color: #94a3b8 !important;
-}
-
-/* ─── 4. 탭 ─── */
-div[data-testid="stTabs"] > div:first-child {
-  border-bottom: 2px solid #e2e8f0 !important;
-  gap: 2px !important;
-  padding-bottom: 0 !important;
-}
-button[data-baseweb="tab"] {
-  border-radius: 8px 8px 0 0 !important;
-  font-weight: 600 !important;
-  font-size: 0.875rem !important;
-  color: #64748b !important;
-  padding: 0.6rem 1.1rem !important;
-  transition: color 0.2s, background 0.2s !important;
-  border-bottom: 2px solid transparent !important;
-  margin-bottom: -2px !important;
-}
-button[data-baseweb="tab"]:hover {
-  background: #f8fafc !important;
-  color: #7c3aed !important;
-}
-button[data-baseweb="tab"][aria-selected="true"] {
-  color: #7c3aed !important;
-  border-bottom: 2px solid #7c3aed !important;
-  font-weight: 700 !important;
-  background: transparent !important;
-}
-div[data-testid="stTabPanel"] {
-  padding-top: 1.5rem !important;
-}
-
-/* ─── 5. 입력 위젯 — 카드 스타일 ─── */
-div[data-testid="stTextInput"] > label,
-div[data-testid="stTextArea"] > label,
-div[data-testid="stSelectbox"] > label,
-div[data-testid="stNumberInput"] > label,
-div[data-testid="stMultiSelect"] > label,
-div[data-testid="stSlider"] > label {
-  font-weight: 600 !important;
-  font-size: 0.825rem !important;
-  color: #374151 !important;
-  letter-spacing: 0.01em !important;
-  margin-bottom: 4px !important;
-}
-div[data-testid="stTextInput"] > div > div,
-div[data-testid="stTextArea"] > div > div,
-div[data-testid="stNumberInput"] > div > div {
-  background: #ffffff !important;
-  border-radius: 10px !important;
-  border: 1.5px solid #e2e8f0 !important;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05) !important;
-  transition: border-color 0.2s, box-shadow 0.2s !important;
-}
-div[data-testid="stTextInput"] > div > div:focus-within,
-div[data-testid="stTextArea"] > div > div:focus-within,
-div[data-testid="stNumberInput"] > div > div:focus-within {
-  border-color: #7c3aed !important;
-  box-shadow: 0 0 0 3px rgba(124,58,237,0.12) !important;
-}
-div[data-baseweb="select"] > div:first-child {
-  background: #ffffff !important;
-  border-radius: 10px !important;
-  border: 1.5px solid #e2e8f0 !important;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05) !important;
-}
-/* 메인 영역 input/textarea 텍스트 — 사이드바 제외 */
-div[data-testid="stAppViewContainer"] div[data-testid="stTextInput"] input,
-div[data-testid="stAppViewContainer"] div[data-testid="stTextArea"] textarea,
-div[data-testid="stAppViewContainer"] div[data-testid="stNumberInput"] input {
-  color: #1e293b !important;
-  font-size: 0.9rem !important;
-  background: transparent !important;
-}
-div[data-testid="stAppViewContainer"] div[data-testid="stTextInput"] input::placeholder,
-div[data-testid="stAppViewContainer"] div[data-testid="stTextArea"] textarea::placeholder {
-  color: #9ca3af !important;
-}
-
-/* ─── 6. 버튼 — 킬러 스타일 ─── */
-/* Primary 버튼 (그라데이션) */
-div.stButton > button[kind="primary"],
-div.stFormSubmitButton > button[kind="primary"],
-div.stButton > button[data-testid="baseButton-primary"] {
-  background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%) !important;
-  color: #ffffff !important;
-  border: none !important;
-  border-radius: 10px !important;
-  font-weight: 700 !important;
-  font-size: 0.9rem !important;
-  padding: 0.65rem 1.5rem !important;
-  box-shadow: 0 4px 15px rgba(124,58,237,0.4) !important;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-  letter-spacing: 0.01em !important;
-}
-div.stButton > button[kind="primary"]:hover,
-div.stFormSubmitButton > button[kind="primary"]:hover,
-div.stButton > button[data-testid="baseButton-primary"]:hover {
-  background: linear-gradient(135deg, #6d28d9 0%, #4338ca 100%) !important;
-  box-shadow: 0 6px 22px rgba(124,58,237,0.5) !important;
-  transform: translateY(-2px) scale(1.01) !important;
-}
-div.stButton > button[kind="primary"]:active,
-div.stFormSubmitButton > button[kind="primary"]:active {
-  transform: translateY(0) scale(0.99) !important;
-  box-shadow: 0 2px 8px rgba(124,58,237,0.3) !important;
-}
-
-/* Secondary 버튼 */
-div.stButton > button[kind="secondary"],
-div.stButton > button[data-testid="baseButton-secondary"],
-div.stButton > button:not([kind]) {
-  background: #ffffff !important;
-  color: #374151 !important;
-  border: 1.5px solid #d1d5db !important;
-  border-radius: 10px !important;
-  font-weight: 600 !important;
-  font-size: 0.875rem !important;
-  padding: 0.6rem 1.25rem !important;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
-  transition: all 0.2s ease !important;
-}
-div.stButton > button[kind="secondary"]:hover,
-div.stButton > button:not([kind]):hover {
-  border-color: #7c3aed !important;
-  color: #7c3aed !important;
-  box-shadow: 0 3px 10px rgba(124,58,237,0.15) !important;
-  transform: translateY(-1px) !important;
-}
-
-/* 다운로드 버튼 — 에메랄드 */
-div.stDownloadButton > button {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
-  color: #ffffff !important;
-  border: none !important;
-  border-radius: 10px !important;
-  font-weight: 700 !important;
-  font-size: 0.875rem !important;
-  box-shadow: 0 4px 12px rgba(16,185,129,0.35) !important;
-  transition: all 0.2s ease !important;
-}
-div.stDownloadButton > button:hover {
-  box-shadow: 0 6px 18px rgba(16,185,129,0.45) !important;
-  transform: translateY(-1px) !important;
-}
-
-/* ─── 7. Expander — 메인 영역만 카드 (사이드바 제외) ─── */
-div[data-testid="stAppViewContainer"]
-  div[data-testid="stExpander"]:not(
-    section[data-testid="stSidebar"] div[data-testid="stExpander"]
-  ) {
-  background: #ffffff !important;
-  border-radius: 12px !important;
-  border: 1px solid #e2e8f0 !important;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
-  overflow: hidden !important;
-  margin-bottom: 0.75rem !important;
-}
-/* 메인 콘텐츠 블록 안에서만 적용 */
-div[data-testid="block-container"] div[data-testid="stExpander"] {
-  background: #ffffff !important;
-  border-radius: 12px !important;
-  border: 1px solid #e2e8f0 !important;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
-  overflow: hidden !important;
-  margin-bottom: 0.75rem !important;
-}
-div[data-testid="block-container"] div[data-testid="stExpander"] summary {
-  padding: 0.9rem 1.25rem !important;
-  font-weight: 600 !important;
-  font-size: 0.9rem !important;
-  color: #1e293b !important;
-}
-div[data-testid="block-container"] div[data-testid="stExpander"] summary:hover {
-  background: #f8fafc !important;
-}
-
-/* ─── 8. Metric — 통합 카드 (구분선 포함) ─── */
-/*
- * :has() 로 metric-container 를 직접 자식으로 가진
- * stHorizontalBlock 을 하나의 카드로 묶는다.
- * Chrome 105+, Firefox 121+, Safari 15.4+ 지원.
- */
-div[data-testid="block-container"]
-  div[data-testid="stHorizontalBlock"]:has(
-    > div[data-testid="stColumn"] > div[data-testid="metric-container"]
-  ) {
-  background: #ffffff !important;
-  border-radius: 16px !important;
-  border: 1px solid #e2e8f0 !important;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.07) !important;
-  padding: 0.25rem 0 !important;
-  margin-bottom: 1.75rem !important;
-  overflow: hidden !important;
-}
-
-/* 개별 metric-container: 카드 배경 제거, 우측 구분선 추가 */
-div[data-testid="block-container"]
-  div[data-testid="stHorizontalBlock"]:has(
-    > div[data-testid="stColumn"] > div[data-testid="metric-container"]
-  )
-  div[data-testid="metric-container"] {
-  background: transparent !important;
-  border: none !important;
-  border-right: 1px solid #e2e8f0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  padding: 1.1rem 1.5rem !important;
-}
-/* 마지막 컬럼 구분선 제거 */
-div[data-testid="block-container"]
-  div[data-testid="stHorizontalBlock"]:has(
-    > div[data-testid="stColumn"] > div[data-testid="metric-container"]
-  )
-  > div[data-testid="stColumn"]:last-child div[data-testid="metric-container"] {
-  border-right: none !important;
-}
-
-div[data-testid="stMetricValue"] > div {
-  font-size: 1.8rem !important;
-  font-weight: 800 !important;
-  color: #0f172a !important;
-  letter-spacing: -0.02em !important;
-}
-div[data-testid="stMetricLabel"] > div {
-  font-size: 0.75rem !important;
-  font-weight: 600 !important;
-  color: #64748b !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.06em !important;
-}
-div[data-testid="stMetricDelta"] > div {
-  font-size: 0.82rem !important;
-  font-weight: 600 !important;
-}
-
-/* ─── 9. Alert / Info 박스 ─── */
-div[data-testid="stAlert"] {
-  border-radius: 10px !important;
-  border-left-width: 4px !important;
-  font-size: 0.875rem !important;
-  margin-bottom: 1.5rem !important;
-}
-
-/* ─── 10. 데이터프레임 ─── */
-div[data-testid="stDataFrame"] {
-  border-radius: 12px !important;
-  overflow: hidden !important;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.06) !important;
-  border: 1px solid #e2e8f0 !important;
-}
-
-/* ─── 11. 체크박스 / 라디오 ─── */
-div[data-testid="stCheckbox"] label,
-div[data-testid="stRadio"] label {
-  font-size: 0.875rem !important;
-  font-weight: 500 !important;
-  color: #374151 !important;
-}
-
-/* ─── 12. Markdown 헤딩 ─── */
-div[data-testid="stMarkdownContainer"] h1 {
-  font-size: 1.7rem !important;
-  font-weight: 800 !important;
-  color: #0f172a !important;
-  letter-spacing: -0.02em !important;
-}
-div[data-testid="stMarkdownContainer"] h2 {
-  font-size: 1.2rem !important;
-  font-weight: 700 !important;
-  color: #1e293b !important;
-  padding-bottom: 0.4rem !important;
-}
-div[data-testid="stMarkdownContainer"] h3 {
-  font-size: 0.975rem !important;
-  font-weight: 700 !important;
-  color: #374151 !important;
-}
-div[data-testid="stMarkdownContainer"] p {
-  font-size: 0.9rem !important;
-  color: #475569 !important;
-  line-height: 1.7 !important;
-}
-
-/* ─── 13. 로그인 폼 카드 (스페셜) ─── */
-div[data-testid="stForm"] {
-  background: #ffffff !important;
-  border-radius: 16px !important;
-  padding: 2rem !important;
-  border: 1px solid #e2e8f0 !important;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.1) !important;
-}
-
-/* ─── 14. 커스텀 스크롤바 ─── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #f1f5f9; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
-::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-/* ─── 15. 이미지 갤러리 카드 ─── */
-div[data-testid="stImage"] img {
-  border-radius: 10px !important;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.1) !important;
-}
-
-/* ─── 16. st.code / st.json 박스 ─── */
-div[data-testid="stCode"],
-div[data-testid="stJson"] {
-  border-radius: 10px !important;
-  border: 1px solid #e2e8f0 !important;
-  overflow: hidden !important;
-}
-
-/* ─── 17. 상태 뱃지 (st.badge) ─── */
-span[data-testid="stBadge"] {
-  border-radius: 20px !important;
-  font-weight: 700 !important;
-  font-size: 0.75rem !important;
-  letter-spacing: 0.03em !important;
-}
-</style>
-""", unsafe_allow_html=True)
+inject_css()
 
 # ══════════════════════════════════════════
 # 로그인 게이트
@@ -728,75 +204,33 @@ for k, v in {
     if k not in st.session_state:
         st.session_state[k] = v
 
+# ── 트렌드 버튼이 예약해 둔 값을 위젯 생성 '전에' 반영 ──
+# Streamlit 은 위젯이 만들어진 뒤에 그 위젯 키(mode_radio 등)를 고치는 걸 막습니다.
+# 그래서 트렌드 버튼은 _pending_* 에만 적어두고, 실제 반영은 사이드바 위젯이
+# 만들어지기 전인 여기서 합니다.
+if st.session_state.pop("_pending_mode", None):
+    st.session_state["mode_radio"] = "키워드 검색 뉴스"
+_pending_kw = st.session_state.pop("_pending_kw", None)
+if _pending_kw:
+    st.session_state["kw_input"] = _pending_kw
+
 # ══════════════════════════════════════════
 # 헬퍼 함수
 # ══════════════════════════════════════════
 
-def get_all_posts():
-    """posts/ 아래 포스트를 최신순으로 반환"""
-    posts = []
-    if not POSTS_DIR.exists():
-        return posts
-    for date_dir in sorted(POSTS_DIR.iterdir(), reverse=True):
-        if not date_dir.is_dir():
-            continue
-        for post_dir in sorted(date_dir.iterdir(), key=lambda d: d.stat().st_mtime, reverse=True):
-            if not post_dir.is_dir():
-                continue
-            content_file = post_dir / "content.txt"
-            if content_file.exists():
-                posts.append({
-                    "date":  date_dir.name,
-                    "title": post_dir.name,
-                    "dir":   post_dir,
-                    "content_path": content_file,
-                })
-    return posts
+# 포스트/이미지 헬퍼 — post_utils.py 로 분리했습니다.
+from post_utils import (  # noqa: E402
+    get_all_posts, get_images, load_img_order, save_img_order,
+)
 
-def get_images(folder: Path):
-    if not folder.exists() or not folder.is_dir():
-        return []
-
-    order_file = folder / "image_order.txt"
-    all_imgs = [f for f in folder.iterdir()
-                if f.is_file() and f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")]
-    try:
-        all_imgs.sort(key=lambda x: int(x.stem))
-    except Exception:
-        all_imgs.sort()
-
-    if order_file.exists():
-        img_map = {f.name: f for f in all_imgs}
-        ordered, seen = [], set()
-        for name in order_file.read_text(encoding="utf-8").splitlines():
-            name = name.strip()
-            if name in img_map and name not in seen:
-                ordered.append(img_map[name])
-                seen.add(name)
-        for f in all_imgs:
-            if f.name not in seen:
-                ordered.append(f)
-        return ordered
-    return all_imgs
-
-
-def load_img_order(post_dir: Path) -> list:
-    if not post_dir.exists() or not post_dir.is_dir():
-        return []
-    return [str(p) for p in get_images(post_dir)]
-
-
-def save_img_order(post_dir: Path, order: list):
-    (post_dir / "image_order.txt").write_text(
-        "\n".join(Path(p).name for p in order), encoding="utf-8"
-    )
 
 def check_env():
     return {
-        "Gemini API":   bool(get_secret("GEMINI_API_KEY")),
-        "Leonardo API": bool(get_secret("LEONARDO_API_KEY")),
-        "Naver ID":     bool(get_secret("NAVER_ID")),
-        "Naver PW":     bool(get_secret("NAVER_PASSWORD")),
+        "Gemini API":       bool(get_secret("GEMINI_API_KEY")),
+        "Leonardo API":     bool(get_secret("LEONARDO_API_KEY")),
+        "Naver ID":         bool(get_secret("NAVER_ID")),
+        "Naver PW":         bool(get_secret("NAVER_PASSWORD")),
+        "Supabase Service Key": bool(get_secret("SUPABASE_SERVICE_ROLE_KEY")),
     }
 
 
@@ -1097,25 +531,101 @@ if IS_CLOUD:
         "생성된 포스트는 현재 세션에서만 유지됩니다. 작업 후 ZIP을 반드시 저장하세요."
     )
 
-# ── 발행 큐 상태 메트릭 바 (Supabase 연결 시 상시 표시) ──
-if bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_KEY")):
-    _q_rows = _supabase_all_rows()
-    if _q_rows:
-        _q_pend = sum(1 for r in _q_rows if r.get("status") == "pending")
-        _q_proc = sum(1 for r in _q_rows if r.get("status") == "processing")
-        _q_done = sum(1 for r in _q_rows if r.get("status") == "done")
-        _q_err  = sum(1 for r in _q_rows if r.get("status") == "error")
-        _qm1, _qm2, _qm3, _qm4, _qm5 = st.columns(5)
-        _qm1.metric("📋 전체 요청",  len(_q_rows))
-        _qm2.metric("🟡 대기 중",    _q_pend)
-        _qm3.metric("🔵 처리 중",    _q_proc)
-        _qm4.metric("🟢 발행 완료",  _q_done)
-        _qm5.metric("🔴 오류",       _q_err,
-                    delta=(f"−{_q_err}" if _q_err else None),
-                    delta_color=("inverse" if _q_err else "normal"))
-        st.markdown("<div style='margin-bottom:0.5rem;'></div>", unsafe_allow_html=True)
+# 대기열 행은 홈 화면과 시스템 상태 탭에서 함께 씁니다 (조회 1회로 공유).
+_q_rows = (_supabase_all_rows()
+           if get_secret("SUPABASE_URL") and get_secret("SUPABASE_SERVICE_ROLE_KEY")
+           else [])
 
-tab_editor, tab_image, tab_posts, tab_status = st.tabs(["📝 원고 에디터", "🎨 이미지 생성", "📂 포스트 관리", "📊 시스템 상태"])
+tab_home, tab_editor, tab_image, tab_posts, tab_status = st.tabs(
+    ["🏠 홈", "📝 원고 에디터", "🎨 이미지 생성", "📂 포스트 관리", "📊 시스템 상태"]
+)
+
+# ─────────────────────────────────────────
+# Tab 0: 홈 — 지금 뭘 해야 하는지 한눈에
+# ─────────────────────────────────────────
+with tab_home:
+    from home_status import build_summary, next_action
+
+    _sm = build_summary(_q_rows)
+    _act_title, _act_desc = next_action(_sm)
+
+    # ── 지금 할 일 배너 ──
+    if _sm["stuck"]:
+        st.error(f"### ⚠️ {_act_title}\n{_act_desc}")
+    elif _sm["published_today"] > 0:
+        st.success(f"### ✅ {_act_title}\n{_act_desc}")
+    else:
+        st.info(f"### 👉 {_act_title}\n{_act_desc}")
+
+    # ── 핵심 지표 ──
+    _h1, _h2, _h3, _h4 = st.columns(4)
+    _h1.metric("📤 오늘 발행", f"{_sm['published_today']}건")
+    _h2.metric("📝 발행 대기 원고", f"{_sm['ready_posts']}건")
+    _h3.metric("📦 새 카드뉴스", f"{_sm['new_zips']}건",
+               help="아직 포스트로 등록하지 않은 카드뉴스 ZIP")
+    _h4.metric("🗂️ 누적 발행", f"{_sm['total_published']}건")
+
+    st.divider()
+
+    # ── 바로 가기 ──
+    st.markdown("##### 바로 시작하기")
+    _b1, _b2, _b3 = st.columns(3)
+    with _b1:
+        st.markdown(
+            "**✍️ 새 원고 쓰기**  \n뉴스·키워드·자유주제로 AI 원고를 만듭니다."
+        )
+        st.caption("→ 위의 **원고 에디터** 탭")
+    with _b2:
+        st.markdown(
+            "**📦 카드뉴스 가져오기**  \n만들어둔 ZIP을 원고+이미지로 등록합니다."
+        )
+        st.caption("→ 위의 **포스트 관리** 탭")
+    with _b3:
+        st.markdown(
+            "**📤 네이버에 올리기**  \n등록된 원고를 골라 블로그에 올립니다."
+        )
+        st.caption("→ 위의 **포스트 관리** 탭")
+
+    st.divider()
+
+    # ── 최근 발행 이력 ──
+    _rc1, _rc2 = st.columns([3, 2])
+
+    with _rc1:
+        st.markdown("##### 🕘 최근 발행")
+        if not _sm["recent"]:
+            st.caption("아직 발행 이력이 없습니다. 첫 글을 올려보세요.")
+        else:
+            for _r in _sm["recent"]:
+                _when = str(_r.get("at", "")).replace("T", " ")[:16]
+                _ttl  = _r.get("title", "")[:44]
+                st.markdown(
+                    f"<div style='padding:.45rem 0;border-bottom:1px solid #e2e8f0;'>"
+                    f"<span style='color:#64748b;font-size:.8rem;'>{_when}</span><br>"
+                    f"<span style='color:#1e293b;'>{_ttl}</span> "
+                    f"<span style='color:#94a3b8;font-size:.78rem;'>"
+                    f"· 이미지 {_r.get('images', 0)}장 · 태그 {len(_r.get('tags', []))}개</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+    with _rc2:
+        st.markdown("##### 📋 발행 대기열")
+        if not _q_rows:
+            st.caption("대기열이 비어 있습니다.")
+        else:
+            _qp = sum(1 for r in _q_rows if r.get("status") == "pending")
+            _qc = sum(1 for r in _q_rows if r.get("status") == "processing")
+            _qd = sum(1 for r in _q_rows if r.get("status") == "done")
+            _qe = sum(1 for r in _q_rows if r.get("status") == "error")
+            st.markdown(
+                f"- 🟡 대기 중 **{_qp}**건\n"
+                f"- 🔵 처리 중 **{_qc}**건\n"
+                f"- 🟢 완료 **{_qd}**건\n"
+                f"- 🔴 오류 **{_qe}**건"
+            )
+            if _sm["stuck"]:
+                st.warning(f"멈춘 작업 {len(_sm['stuck'])}건 — 시스템 상태 탭에서 정리")
 
 # ─────────────────────────────────────────
 # Tab 1: 원고 에디터
@@ -1145,8 +655,10 @@ with tab_editor:
                         use_container_width=True,
                         help=label,
                     ):
-                        st.session_state["mode_radio"] = "키워드 검색 뉴스"
-                        st.session_state["kw_input"] = label[:60]
+                        # 위젯 키를 직접 고치면 StreamlitAPIException 이 납니다.
+                        # 예약만 해두고, 다음 실행 시작 지점에서 반영합니다.
+                        st.session_state["_pending_mode"] = True
+                        st.session_state["_pending_kw"] = label[:60]
                         st.rerun()
         else:
             st.info("트렌드를 불러올 수 없습니다. 🔄 새로고침을 눌러주세요.")
@@ -1209,6 +721,46 @@ with tab_editor:
                     st.error("생성 중 오류가 발생했습니다. 생성 경로가 유효한지 확인해주세요.")
             else:
                 st.error("생성 중 오류가 발생했습니다. 위 로그를 확인해주세요.")
+
+    # ══ 원고가 없을 때 — 빈 화면 대신 최근 포스트를 바로 열 수 있게 ══
+    if not (st.session_state["generation_done"] and st.session_state["last_post_dir"]):
+        _recent_posts = get_all_posts()[:6]
+        if _recent_posts:
+            st.divider()
+            st.subheader("이어서 작업하기")
+            st.caption("최근 만든 원고입니다. 눌러서 바로 편집·발행 단계로 이동합니다.")
+
+            for _row_start in range(0, len(_recent_posts), 3):
+                _pcols = st.columns(3)
+                for _off, _p in enumerate(_recent_posts[_row_start:_row_start + 3]):
+                    with _pcols[_off]:
+                        _imgs_n = len(get_images(_p["dir"]))
+                        try:
+                            _chars = len(_p["content_path"].read_text(encoding="utf-8"))
+                        except Exception:
+                            _chars = 0
+                        st.markdown(
+                            f"<div style='border:1px solid #e2e8f0;border-radius:10px;"
+                            f"padding:.7rem .8rem;margin-bottom:.5rem;min-height:5.2rem;'>"
+                            f"<div style='color:#64748b;font-size:.75rem;'>{_p['date']}</div>"
+                            f"<div style='color:#1e293b;font-weight:600;font-size:.9rem;"
+                            f"margin:.2rem 0;'>{_p['title'][:34]}</div>"
+                            f"<div style='color:#94a3b8;font-size:.75rem;'>"
+                            f"이미지 {_imgs_n}장 · {_chars:,}자</div></div>",
+                            unsafe_allow_html=True,
+                        )
+                        if st.button("✏️ 이어서 편집", key=f"resume_{_row_start}_{_off}",
+                                     use_container_width=True):
+                            st.session_state["last_post_dir"]   = str(_p["dir"])
+                            st.session_state["generation_done"] = True
+                            st.session_state["editor_post_key"] = ""   # 아래에서 다시 로드
+                            st.rerun()
+        else:
+            st.divider()
+            st.info(
+                "아직 만든 원고가 없습니다. 위에서 **블로그 원고 자동 생성**을 눌러 첫 글을 만들거나, "
+                "**포스트 관리** 탭에서 카드뉴스 ZIP을 가져오세요."
+            )
 
     # ══ 섹션 2+3+4: 편집 / 미리보기 / 이미지 관리 / 업로드 ══
     if st.session_state["generation_done"] and st.session_state["last_post_dir"]:
@@ -1326,7 +878,7 @@ with tab_editor:
         )
 
         # ── 최종 포스팅 (Supabase 대기열) ──
-        supabase_ok = bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_KEY"))
+        supabase_ok = bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_SERVICE_ROLE_KEY"))
         if supabase_ok:
             # 예약 발행 설정
             use_schedule = st.checkbox(
@@ -1390,7 +942,7 @@ with tab_editor:
         else:
             st.button("📋 최종 포스팅 (Supabase 미설정)", disabled=True,
                       use_container_width=True, key="final_post_disabled")
-            st.caption("시스템 상태 탭에서 SUPABASE_URL / SUPABASE_KEY 설정을 확인하세요.")
+            st.caption("시스템 상태 탭에서 SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 설정을 확인하세요.")
 
         st.divider()
 
@@ -1428,6 +980,31 @@ with tab_editor:
                 )
         else:
             # ── 로컬 PC: 직접 Playwright 업로드 ─────────────────────────────
+            # 발행 옵션 (포스트 관리 탭과 동일하게 제공)
+            from cta_presets import load_presets as _load_cta, summary as _cta_sum
+
+            _ed_presets = _load_cta()
+            _eo1, _eo2, _eo3 = st.columns(3)
+            with _eo1:
+                _ed_cta_pick = st.selectbox(
+                    "📣 CTA 블록", ["(사용 안 함)"] + [p["name"] for p in _ed_presets],
+                    key="ed_cta_pick",
+                    help="글 끝에 붙일 CTA를 고르세요. 포스트 관리 탭의 'CTA 관리'에서 추가합니다.",
+                )
+                if _ed_cta_pick != "(사용 안 함)":
+                    _p = next((p for p in _ed_presets if p["name"] == _ed_cta_pick), None)
+                    if _p:
+                        st.caption(f"구성: {_cta_sum(_p)}")
+            with _eo2:
+                _ed_category = st.text_input("📁 카테고리", key="ed_category",
+                                             placeholder="비우면 기본값")
+            with _eo3:
+                _ed_visibility = st.selectbox(
+                    "🔓 공개 설정",
+                    ["(기본값)", "전체공개", "이웃공개", "서로이웃공개", "비공개"],
+                    key="ed_visibility",
+                )
+
             col_up, col_dl = st.columns(2)
             with col_up:
                 if st.button("📤 네이버 블로그에 업로드", type="primary",
@@ -1438,10 +1015,17 @@ with tab_editor:
                     st.info("브라우저가 자동으로 열립니다. 글 확인 후 [발행] 버튼을 직접 눌러주세요.")
                     try:
                         from step2_upload import upload_to_naver_blog
+                        _ed_cta_obj = (
+                            next((p for p in _ed_presets if p["name"] == _ed_cta_pick), None)
+                            if _ed_cta_pick != "(사용 안 함)" else None
+                        )
                         upload_to_naver_blog(
                             folder_path=str(post_dir),
                             headless=False,
                             auto_publish=False,
+                            cta=_ed_cta_obj,
+                            category=_ed_category.strip(),
+                            visibility="" if _ed_visibility == "(기본값)" else _ed_visibility,
                         )
                     except Exception as e:
                         st.error(f"업로드 오류: {e}")
@@ -1588,7 +1172,7 @@ with tab_image:
                             f"https://image.pollinations.ai/prompt/{encoded}"
                             f"?width=1024&height=1024&nologo=true&model=flux-realism&seed={slot}"
                         )
-                        resp = requests.get(url, timeout=90, verify=False, headers=_headers)
+                        resp = requests.get(url, timeout=90, headers=_headers)
                         resp.raise_for_status()
                         sp.write_bytes(resp.content)
                         done_paths.append(str(sp))
@@ -1966,6 +1550,145 @@ section[data-testid="stFileUploadDropzone"] span {
 # Tab 3: 포스트 관리
 # ─────────────────────────────────────────
 with tab_posts:
+    # ── 카드뉴스 ZIP 자동 스캔 ──
+    with st.expander("📦 카드뉴스 ZIP 가져오기 — 폴더 자동 스캔", expanded=False):
+        try:
+            from publish import CARDNEWS_DIR, collect_candidates
+
+            st.caption(f"스캔 폴더: `{CARDNEWS_DIR}`")
+
+            if st.button("🔄 다시 스캔", key="rescan_zip_btn"):
+                st.rerun()
+
+            _cands = [c for c in collect_candidates() if c["kind"] == "zip"]
+            if not _cands:
+                st.info("아직 임포트하지 않은 카드뉴스 ZIP이 없습니다. (이미 등록된 건 아래 목록에 있습니다)")
+            else:
+                _labels = [
+                    f"[{c['date'] or '날짜없음'}]  {c['title'][:50]}  ·  이미지 {c['images']}장"
+                    for c in _cands
+                ]
+                _pick = st.selectbox(
+                    "가져올 ZIP 선택 (최신순)",
+                    range(len(_cands)),
+                    format_func=lambda i: _labels[i],
+                    key="zip_scan_pick",
+                )
+                if st.button("📥 가져오기", type="primary", use_container_width=True,
+                             key="zip_scan_import_btn"):
+                    try:
+                        from zip_importer import import_cardnews_zip
+
+                        with st.spinner("ZIP 분석 및 변환 중..."):
+                            dest = import_cardnews_zip(_cands[_pick]["path"], posts_dir=POSTS_DIR)
+
+                        n_imgs  = len(get_images(dest))
+                        n_paras = len([
+                            p for p in (dest / "content.txt").read_text(encoding="utf-8").split("\n\n")
+                            if p.strip()
+                        ]) - 1
+                        _tags_p = dest / "tags.txt"
+                        _tag_note = (
+                            f" · 태그 {len(_tags_p.read_text(encoding='utf-8').splitlines())}개"
+                            if _tags_p.exists() else ""
+                        )
+                        st.success(
+                            f"✅ 가져오기 완료 — `{dest.name}`  \n"
+                            f"문단 {n_paras}개 · 이미지 {n_imgs}장{_tag_note}  \n"
+                            "아래 목록에서 선택해 업로드하세요."
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 가져오기 실패: {e}")
+        except Exception as e:
+            st.warning(f"ZIP 스캔을 사용할 수 없습니다: {e}")
+
+        st.divider()
+        st.caption("스캔 폴더 밖의 ZIP은 아래에서 직접 올리세요.")
+        zip_file = st.file_uploader(
+            "ZIP 파일 직접 선택", type=["zip"], key="cardnews_zip_uploader"
+        )
+        if zip_file is not None and st.button(
+            "📥 업로드한 ZIP 임포트", use_container_width=True, key="zip_import_btn"
+        ):
+            tmp_zip = BASE_DIR / f"_import_{zip_file.name}"
+            try:
+                tmp_zip.write_bytes(zip_file.getvalue())
+                from zip_importer import import_cardnews_zip
+
+                with st.spinner("ZIP 분석 및 변환 중..."):
+                    dest = import_cardnews_zip(tmp_zip, posts_dir=POSTS_DIR)
+                st.success(f"✅ 임포트 완료 — `{dest.name}`")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ 임포트 실패: {e}")
+            finally:
+                tmp_zip.unlink(missing_ok=True)
+
+    # ── CTA 프리셋 관리 ──
+    with st.expander("📣 CTA 관리 — 글 끝에 붙일 블록 만들기", expanded=False):
+        from cta_presets import load_presets, save_presets, summary as cta_summary
+
+        st.caption(
+            "문구·링크·이미지·지도를 조합해 저장해두면, 발행할 때 그때그때 골라 쓸 수 있습니다. "
+            "필요한 것만 채우고 나머지는 비워두세요."
+        )
+
+        _cta_list = load_presets()
+
+        if _cta_list:
+            st.markdown("**저장된 CTA**")
+            for _i, _p in enumerate(_cta_list):
+                _c1, _c2 = st.columns([5, 1])
+                with _c1:
+                    st.markdown(f"**{_p['name']}** — {cta_summary(_p)}")
+                with _c2:
+                    if st.button("삭제", key=f"cta_del_{_i}", use_container_width=True):
+                        _cta_list.pop(_i)
+                        save_presets(_cta_list)
+                        st.rerun()
+            st.divider()
+
+        st.markdown("**새 CTA 추가 / 수정**")
+        _edit_target = st.selectbox(
+            "편집할 CTA",
+            ["(새로 만들기)"] + [p["name"] for p in _cta_list],
+            key="cta_edit_target",
+        )
+        _base = (next((p for p in _cta_list if p["name"] == _edit_target), None)
+                 if _edit_target != "(새로 만들기)" else None) or {
+            "name": "", "text": "", "link": "", "image": "", "map": ""
+        }
+
+        with st.form("cta_form"):
+            _n = st.text_input("이름 *", value=_base["name"],
+                               placeholder="예: 상담문의 기본 / 옥정중앙역 현장")
+            _t = st.text_area("문구", value=_base["text"], height=90,
+                              placeholder="더 자세한 현장 브리핑이 궁금하시다면 편하게 문의주세요.")
+            _l = st.text_input("링크", value=_base["link"],
+                               placeholder="https://open.kakao.com/... (상담 신청 페이지 등)")
+            _im = st.text_input("이미지 파일 경로", value=_base["image"],
+                                placeholder=r"D:\...\배너.jpg")
+            _mp = st.text_input("지도 주소", value=_base["map"],
+                                placeholder="경기 양주시 옥정동 ... (현장/홍보관 주소)")
+            _saved = st.form_submit_button("💾 저장", type="primary", use_container_width=True)
+
+        if _saved:
+            if not _n.strip():
+                st.error("이름은 반드시 입력해주세요.")
+            else:
+                _new = {"name": _n.strip(), "text": _t, "link": _l.strip(),
+                        "image": _im.strip(), "map": _mp.strip()}
+                _others = [p for p in _cta_list if p["name"] != _n.strip()]
+                save_presets(_others + [_new])
+                st.success(f"✅ '{_n.strip()}' 저장 완료")
+                st.rerun()
+
+        st.info(
+            "💡 지도는 네이버 에디터 화면 구조에 따라 자동 삽입이 실패할 수 있습니다. "
+            "그럴 땐 주소를 안내 메시지로 알려드리니 발행 화면에서 직접 추가해주세요."
+        )
+
     st.subheader("생성된 포스트 목록")
 
     posts = get_all_posts()
@@ -1973,7 +1696,25 @@ with tab_posts:
     if not posts:
         st.info("아직 생성된 포스트가 없습니다. '원고 에디터' 탭에서 첫 원고를 만들어보세요.")
     else:
-        labels = [f"[{p['date']}]  {p['title']}" for p in posts]
+        # 발행 이력이 있는 글은 목록에서 바로 보이게 표시 (중복 발행 방지)
+        try:
+            from publish import _published_titles
+            _done_titles = _published_titles()
+        except Exception:
+            _done_titles = set()
+
+        def _post_first_line(p):
+            try:
+                txt = p["content_path"].read_text(encoding="utf-8").strip()
+                return txt.split("\n\n")[0].strip()
+            except Exception:
+                return ""
+
+        labels = [
+            f"[{p['date']}]  {p['title']}"
+            + ("   ✅ 이미 발행함" if _post_first_line(p) in _done_titles else "")
+            for p in posts
+        ]
         sel_idx = st.selectbox("포스트 선택", range(len(posts)), format_func=lambda i: labels[i])
 
         selected = posts[sel_idx]
@@ -1984,25 +1725,65 @@ with tab_posts:
         meta_col, btn_col = st.columns([3, 1])
         with meta_col:
             st.markdown(f"📅 **{selected['date']}** &nbsp;|&nbsp; 🖼️ **{len(images)}장** &nbsp;|&nbsp; 📁 `{post_dir.name}`")
+            if _post_first_line(selected) in _done_titles:
+                st.warning("⚠️ 이 글은 이미 발행 이력이 있습니다 — 중복 발행에 주의하세요.")
         with btn_col:
             if IS_CLOUD:
                 # 클라우드: 네이버 봇 차단 → 버튼 비활성화
                 st.button("📤 로컬 PC 전용", disabled=True,
                           use_container_width=True, key="mgmt_upload_disabled")
                 st.caption("원고 에디터 탭의 **대기열 등록** 을 이용하세요")
-            else:
-                if st.button("📤 네이버 업로드", type="primary",
-                             use_container_width=True, key="mgmt_upload"):
-                    st.info("브라우저가 자동으로 열립니다.")
-                    try:
-                        from step2_upload import upload_to_naver_blog
-                        upload_to_naver_blog(
-                            folder_path=str(post_dir),
-                            headless=False,
-                            auto_publish=False,
-                        )
-                    except Exception as e:
-                        st.error(f"업로드 오류: {e}")
+
+        # ── 발행 옵션 (CTA · 카테고리 · 공개설정) ──
+        if not IS_CLOUD:
+            from cta_presets import load_presets, summary as cta_summary
+
+            _presets = load_presets()
+            _opt1, _opt2, _opt3 = st.columns(3)
+
+            with _opt1:
+                _cta_names = ["(사용 안 함)"] + [p["name"] for p in _presets]
+                _cta_pick = st.selectbox(
+                    "📣 CTA 블록", _cta_names, key=f"cta_pick_{sel_idx}",
+                    help="글 끝에 붙일 CTA를 그때그때 고르세요. 아래 'CTA 관리'에서 추가할 수 있습니다.",
+                )
+                if _cta_pick != "(사용 안 함)":
+                    _sel_cta = next((p for p in _presets if p["name"] == _cta_pick), None)
+                    if _sel_cta:
+                        st.caption(f"구성: {cta_summary(_sel_cta)}")
+
+            with _opt2:
+                _category = st.text_input(
+                    "📁 카테고리", key=f"cat_{sel_idx}",
+                    placeholder="비우면 기본값",
+                    help="네이버 블로그에 있는 카테고리 이름을 정확히 입력하세요.",
+                )
+
+            with _opt3:
+                _visibility = st.selectbox(
+                    "🔓 공개 설정",
+                    ["(기본값)", "전체공개", "이웃공개", "서로이웃공개", "비공개"],
+                    key=f"vis_{sel_idx}",
+                )
+
+            if st.button("📤 네이버 업로드", type="primary",
+                         use_container_width=True, key="mgmt_upload"):
+                st.info("브라우저가 자동으로 열립니다. 입력이 끝나면 직접 [발행]을 눌러주세요.")
+                try:
+                    from step2_upload import upload_to_naver_blog
+
+                    _cta_obj = (next((p for p in _presets if p["name"] == _cta_pick), None)
+                                if _cta_pick != "(사용 안 함)" else None)
+                    upload_to_naver_blog(
+                        folder_path=str(post_dir),
+                        headless=False,
+                        auto_publish=False,
+                        cta=_cta_obj,
+                        category=_category.strip(),
+                        visibility="" if _visibility == "(기본값)" else _visibility,
+                    )
+                except Exception as e:
+                    st.error(f"업로드 오류: {e}")
 
         st.divider()
 
@@ -2068,7 +1849,8 @@ with tab_posts:
 with tab_status:
     st.subheader("API 키 설정 상태")
     env = check_env()
-    cols = st.columns(4)
+    # 열 개수를 항목 수에 맞춰 만듭니다 (항목이 늘어도 IndexError 나지 않도록)
+    cols = st.columns(max(1, len(env)))
     for i, (name, ok) in enumerate(env.items()):
         with cols[i]:
             if ok:
@@ -2145,15 +1927,64 @@ with tab_status:
             )
             st.bar_chart(_chart_data, color="#7c3aed")
 
+    # ── 발행 이력 ──
+    st.divider()
+    st.subheader("🗂️ 발행 이력")
+
+    _log_path = POSTS_DIR / "publish_log.jsonl"
+    if not _log_path.exists():
+        st.info("아직 발행 이력이 없습니다. 네이버 업로드를 실행하면 여기에 기록됩니다.")
+    else:
+        import json as _json
+
+        _records = []
+        for _line in _log_path.read_text(encoding="utf-8").splitlines():
+            if _line.strip():
+                try:
+                    _records.append(_json.loads(_line))
+                except Exception:
+                    continue
+        _records.reverse()   # 최신순
+
+        if not _records:
+            st.info("발행 이력이 비어 있습니다.")
+        else:
+            _titles = [r.get("title", "") for r in _records]
+            _dupes = {t for t in _titles if _titles.count(t) > 1}
+            if _dupes:
+                st.warning(
+                    f"⚠️ 같은 제목으로 두 번 이상 업로드된 글이 {len(_dupes)}건 있습니다 — "
+                    "중복 발행 여부를 확인해보세요."
+                )
+
+            import pandas as _pd
+
+            st.dataframe(
+                _pd.DataFrame([
+                    {
+                        "일시":   r.get("at", "").replace("T", " "),
+                        "제목":   r.get("title", "")[:45],
+                        "문단":   r.get("paragraphs", 0),
+                        "이미지": r.get("images", 0),
+                        "태그":   len(r.get("tags", [])),
+                        "자동발행": "O" if r.get("auto_published") else "-",
+                    }
+                    for r in _records[:50]
+                ]),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(f"최근 {min(len(_records), 50)}건 표시 · 전체 {len(_records)}건")
+
     # ── Supabase 발행 대기열 현황 ──
     st.divider()
     st.subheader("📋 Supabase 발행 대기열")
 
-    gs_ok = bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_KEY"))
+    gs_ok = bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_SERVICE_ROLE_KEY"))
     if not gs_ok:
         st.warning(
             "Supabase 미연결 — Streamlit Cloud Secrets에 아래 두 키를 추가하세요:  \n"
-            "`SUPABASE_URL` · `SUPABASE_KEY`"
+            "`SUPABASE_URL` · `SUPABASE_SERVICE_ROLE_KEY`"
         )
     else:
         _ref_col, _csv_col = st.columns([1, 1])
@@ -2163,6 +1994,49 @@ with tab_status:
 
         with st.spinner("Supabase 조회 중..."):
             rows = _supabase_all_rows()
+
+        # ── 멈춘 작업 복구 · 오래된 행 정리 ──
+        from home_status import find_stuck_rows, STUCK_HOURS
+
+        _stuck = find_stuck_rows(rows)
+        _finished = [r for r in rows if r.get("status") in ("done", "error")]
+        _sb_url = get_secret("SUPABASE_URL")
+        _sb_key = get_secret("SUPABASE_SERVICE_ROLE_KEY")
+
+        if _stuck:
+            st.warning(
+                f"⚠️ **멈춘 작업 {len(_stuck)}건** — {STUCK_HOURS}시간 넘게 '처리 중' 상태입니다.  \n"
+                "업로드 도중 브라우저가 닫히면 이 상태로 남아 다시 처리되지 않습니다."
+            )
+            for _s in _stuck:
+                st.caption(f"· {_s.get('title', '')[:56]}")
+            _rs1, _rs2 = st.columns(2)
+            with _rs1:
+                if st.button("↩️ 대기 상태로 되돌리기", type="primary",
+                             use_container_width=True, key="reset_stuck"):
+                    from supabase_db import reset_stuck_rows
+                    _n = reset_stuck_rows(_sb_url, _sb_key, [r.get("id") for r in _stuck])
+                    st.success(f"✅ {_n}건을 대기 상태로 되돌렸습니다.")
+                    st.rerun()
+            with _rs2:
+                if st.button("🗑️ 멈춘 작업 삭제", use_container_width=True, key="del_stuck"):
+                    from supabase_db import delete_row
+                    _n = sum(1 for r in _stuck if delete_row(_sb_url, _sb_key, r.get("id")))
+                    st.success(f"✅ {_n}건 삭제했습니다.")
+                    st.rerun()
+
+        if _finished:
+            with st.expander(f"🧹 완료·오류 항목 정리 ({len(_finished)}건)", expanded=False):
+                st.caption(
+                    "발행이 끝났거나 오류로 남은 행을 지웁니다. "
+                    "지워도 로컬 포스트 폴더와 발행 이력은 그대로 남습니다."
+                )
+                if st.button("🗑️ 완료·오류 항목 모두 삭제",
+                             use_container_width=True, key="clean_finished"):
+                    from supabase_db import delete_rows_by_status
+                    _n = delete_rows_by_status(_sb_url, _sb_key, ["done", "error"])
+                    st.success(f"✅ {_n}건 삭제했습니다.")
+                    st.rerun()
 
         if not rows:
             st.info("등록된 항목이 없습니다.")

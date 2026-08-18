@@ -1,5 +1,5 @@
 """
-step2_generate.py — Supabase watcher 에서 전달받은 데이터로 네이버 블로그 업로드
+step2_generate.py - Supabase watcher 에서 전달받은 데이터로 네이버 블로그 업로드
 
 호출 방식 (watcher.py 에서):
     from step2_generate import upload_post
@@ -20,8 +20,8 @@ post_data 구조 (Supabase post_queue 행):
         "status":       "pending"
     }
 """
+import json
 import os
-import time
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -36,8 +36,10 @@ POSTS_DIR = Path("posts")
 
 def _prepare_folder(post_data: dict) -> Path:
     """로컬 폴더를 찾거나 생성 후 content.txt 를 Supabase 내용으로 동기화."""
-    date         = post_data.get("date", "")
-    local_folder = post_data.get("local_folder", "")
+    from supabase_db import sanitize_path_component
+
+    date         = sanitize_path_component(post_data.get("date", ""))
+    local_folder = sanitize_path_component(post_data.get("local_folder", ""))
     content      = post_data.get("content", "")
     title        = post_data.get("title", "")
 
@@ -65,7 +67,14 @@ def _prepare_folder(post_data: dict) -> Path:
     if folder is None:
         folder = POSTS_DIR / date / local_folder
         folder.mkdir(parents=True, exist_ok=True)
-        print(f"  [경고] 로컬 폴더 없음 → {folder} 임시 생성 (이미지 없음)")
+        print(f"  [경고] 로컬 폴더 없음 -> {folder} 임시 생성 (이미지 없음)")
+
+    # 방어심층: sanitize를 거쳤어도 최종 경로가 POSTS_DIR 밖으로 나가면 안전한 경로로 강제 고정
+    folder = folder.resolve()
+    if POSTS_DIR.resolve() not in folder.parents and folder != POSTS_DIR.resolve():
+        folder = POSTS_DIR / date / local_folder
+        folder.mkdir(parents=True, exist_ok=True)
+        print(f"  [경고] 안전하지 않은 경로 감지 -> {folder} 로 강제 고정")
 
     # content.txt: Supabase 버전이 더 최신이면 덮어쓰기
     content_file = folder / "content.txt"
@@ -76,6 +85,25 @@ def _prepare_folder(post_data: dict) -> Path:
         write_content = content if first_line == title else f"{title}\n\n{content}"
         content_file.write_text(write_content, encoding="utf-8")
         print(f"  content.txt 업데이트 완료")
+
+    # Supabase Storage에서 이미지 다운로드 (클라우드에서 업로드된 경우)
+    image_urls_raw = post_data.get("image_urls", "")
+    if image_urls_raw:
+        try:
+            image_urls = json.loads(image_urls_raw) if isinstance(image_urls_raw, str) else image_urls_raw
+            if image_urls:
+                from supabase_db import download_images_from_storage
+                downloaded = download_images_from_storage(image_urls, str(folder))
+                if downloaded:
+                    # image_order.txt 생성 (순서 보존)
+                    order_file = folder / "image_order.txt"
+                    order_file.write_text(
+                        "\n".join(Path(p).name for p in downloaded),
+                        encoding="utf-8",
+                    )
+                    print(f"  이미지 {len(downloaded)}장 Storage -> 로컬 동기화 완료")
+        except Exception as e:
+            print(f"  [경고] 이미지 Storage 다운로드 실패: {e}")
 
     return folder
 
@@ -221,8 +249,8 @@ def upload_post(post_data: dict, use_selenium: bool = True) -> None:
 
     Args:
         post_data   : Supabase post_queue 행 딕셔너리
-        use_selenium: True  → _upload_with_selenium() 사용 (셀레니움 코드 넣은 후)
-                      False → Playwright (step2_upload.py) 직접 사용
+        use_selenium: True  -> _upload_with_selenium() 사용 (셀레니움 코드 넣은 후)
+                      False -> Playwright (step2_upload.py) 직접 사용
     """
     title  = post_data.get("title", "")
     content = post_data.get("content", "")
@@ -240,11 +268,11 @@ def upload_post(post_data: dict, use_selenium: bool = True) -> None:
             _upload_with_selenium(title, content, tags, images)
             return
         except NotImplementedError:
-            print("  [안내] 셀레니움 코드 미설정 → Playwright 폴백으로 실행합니다.")
+            print("  [안내] 셀레니움 코드 미설정 -> Playwright 폴백으로 실행합니다.")
         except Exception:
             raise   # 셀레니움 실행 중 실제 오류는 그대로 전파
 
-    # Playwright 폴백 (headless=False → 사무실 PC 에서 화면 표시)
+    # Playwright 폴백 (headless=False -> 사무실 PC 에서 화면 표시)
     _upload_with_playwright(folder, headless=False, auto_publish=False)
 
 

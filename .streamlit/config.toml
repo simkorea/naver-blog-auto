@@ -3,7 +3,14 @@ maxUploadSize = 200
 enableXsrfProtection = true
 
 [theme]
-base = "dark"
+# 본문 영역은 커스텀 CSS가 흰 배경으로 칠하므로 밝은 테마를 기준으로 씁니다.
+# (base="dark" 로 두면 기본 글자색이 거의 흰색이라 흰 배경 위에서 안 보입니다.)
+# 사이드바는 CSS에서 따로 어둡게 칠하므로 영향받지 않습니다.
+base = "light"
+primaryColor = "#7c3aed"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8fafc"
+textColor = "#1e293b"
 
 [browser]
 gatherUsageStats = false

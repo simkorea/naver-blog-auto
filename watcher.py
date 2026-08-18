@@ -1,5 +1,5 @@
 """
-사무실 PC 24시간 실행용 — Supabase post_queue 실시간 감시 & 자동 업로드
+사무실 PC 24시간 실행용 - Supabase post_queue 실시간 감시 & 자동 업로드
 
 설치 (최초 1회):
     pip install supabase            ← 리얼타임 구독용 (선택)
@@ -20,8 +20,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SUPABASE_URL  = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY  = os.getenv("SUPABASE_KEY", "")
-POLL_INTERVAL = 30   # 초 — 리얼타임 누락 보완용 폴링 간격
+# post_queue 는 anon(public) 역할 접근을 막아뒀으므로 RLS를 우회하는 service_role 키를 사용합니다.
+# 이 키는 서버(사무실 PC)에서만 쓰고 절대 브라우저/클라이언트 코드에 노출하면 안 됩니다.
+SUPABASE_KEY  = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+POLL_INTERVAL = 30   # 초 - 리얼타임 누락 보완용 폴링 간격
 
 # 중복 처리 방지 (리얼타임 + 폴링 동시 트리거 대비)
 _processing_ids: set = set()
@@ -85,7 +87,7 @@ def poll_once() -> None:
     if not rows:
         return
 
-    print(f"[{_now()}] 대기 항목 {len(rows)}건 발견 → 처리 시작")
+    print(f"[{_now()}] 대기 항목 {len(rows)}건 발견 -> 처리 시작")
     process_row(rows[0])
 
 
@@ -94,12 +96,12 @@ def poll_once() -> None:
 def _realtime_thread() -> None:
     """
     supabase-py 가 설치된 경우 리얼타임 INSERT 구독을 백그라운드 스레드에서 실행.
-    실패하거나 패키지가 없으면 조용히 종료 → 폴링이 보완함.
+    실패하거나 패키지가 없으면 조용히 종료 -> 폴링이 보완함.
     """
     try:
         from supabase import create_client  # type: ignore
     except ImportError:
-        print(f"[{_now()}] supabase 패키지 없음 → 폴링 전용으로 실행합니다.")
+        print(f"[{_now()}] supabase 패키지 없음 -> 폴링 전용으로 실행합니다.")
         print("         (리얼타임을 원하면: pip install supabase)")
         return
 
@@ -132,14 +134,14 @@ def _realtime_thread() -> None:
                 )
                 .subscribe()
             )
-            print(f"[{_now()}] 리얼타임 구독 활성화 — post_queue INSERT 감시 중")
+            print(f"[{_now()}] 리얼타임 구독 활성화 - post_queue INSERT 감시 중")
 
             # 구독 유지 (내부 WebSocket 스레드가 이벤트 처리)
             while True:
                 time.sleep(60)
 
         except Exception as e:
-            print(f"[{_now()}] 리얼타임 연결 오류: {e}  → {reconnect_delay}초 후 재연결 시도")
+            print(f"[{_now()}] 리얼타임 연결 오류: {e}  -> {reconnect_delay}초 후 재연결 시도")
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, 300)   # 최대 5분
 
@@ -148,7 +150,7 @@ def _realtime_thread() -> None:
 
 def main() -> None:
     if not SUPABASE_URL or not SUPABASE_KEY:
-        print("[오류] .env 에 SUPABASE_URL 과 SUPABASE_KEY 가 없습니다.")
+        print("[오류] .env 에 SUPABASE_URL 과 SUPABASE_SERVICE_ROLE_KEY 가 없습니다.")
         sys.exit(1)
 
     print("=" * 55)
@@ -166,7 +168,7 @@ def main() -> None:
     # 시작 즉시 기존 pending 처리
     poll_once()
 
-    # 메인 루프 — 30초마다 폴링 (리얼타임 누락 보완)
+    # 메인 루프 - 30초마다 폴링 (리얼타임 누락 보완)
     while True:
         try:
             time.sleep(POLL_INTERVAL)

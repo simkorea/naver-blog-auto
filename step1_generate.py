@@ -201,7 +201,7 @@ def download_images_from_leonardo(prompts, folder_path, card_data=None, start_nu
                 f"?width=1024&height=1024&nologo=true&model=flux-realism&seed={image_num}"
             )
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            img_res = requests.get(url, timeout=90, verify=False, headers=headers)
+            img_res = requests.get(url, timeout=90, headers=headers)
             img_res.raise_for_status()
 
             with open(image_path, "wb") as f:
