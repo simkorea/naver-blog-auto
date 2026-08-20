@@ -169,7 +169,7 @@ if not st.session_state["authenticated"]:
         with st.form("login_form"):
             uid = st.text_input("아이디", placeholder="아이디를 입력하세요")
             pw  = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요")
-            submitted = st.form_submit_button("🔐  로그인", use_container_width=True, type="primary")
+            submitted = st.form_submit_button("🔐  로그인", width='stretch', type="primary")
         if submitted:
             if uid == get_secret("APP_USER") and pw == get_secret("APP_PASSWORD"):
                 st.session_state["authenticated"] = True
@@ -288,12 +288,12 @@ def render_image_manager(post_dir: Path, order_key: str, prefix: str):
         st.markdown("**일괄 작업**")
         st.caption(f"{len(checked_names)} / {len(imgs)}개 선택")
 
-        if st.button("☑ 전체 선택", use_container_width=True, key=f"{prefix}_sel_all"):
+        if st.button("☑ 전체 선택", width='stretch', key=f"{prefix}_sel_all"):
             for p in imgs:
                 st.session_state[f"{prefix}_chk_{Path(p).name}"] = True
             st.rerun()
 
-        if st.button("□ 전체 해제", use_container_width=True, key=f"{prefix}_desel_all"):
+        if st.button("□ 전체 해제", width='stretch', key=f"{prefix}_desel_all"):
             for p in imgs:
                 st.session_state[f"{prefix}_chk_{Path(p).name}"] = False
             st.rerun()
@@ -302,7 +302,7 @@ def render_image_manager(post_dir: Path, order_key: str, prefix: str):
 
         if st.button(
             f"🗑 선택 삭제\n({len(checked_names)}개)",
-            use_container_width=True,
+            width='stretch',
             type="primary",
             disabled=(len(checked_names) == 0),
             key=f"{prefix}_bulk_del",
@@ -322,7 +322,7 @@ def render_image_manager(post_dir: Path, order_key: str, prefix: str):
         st.divider()
 
         move_disabled = len(checked_names) == 0
-        if st.button("↑ 위로", use_container_width=True,
+        if st.button("↑ 위로", width='stretch',
                      disabled=move_disabled, key=f"{prefix}_bulk_up"):
             names = [Path(p).name for p in imgs]
             for i in range(1, len(names)):
@@ -334,7 +334,7 @@ def render_image_manager(post_dir: Path, order_key: str, prefix: str):
             save_img_order(post_dir, new_order)
             st.rerun()
 
-        if st.button("↓ 아래로", use_container_width=True,
+        if st.button("↓ 아래로", width='stretch',
                      disabled=move_disabled, key=f"{prefix}_bulk_dn"):
             names = [Path(p).name for p in imgs]
             for i in range(len(names) - 2, -1, -1):
@@ -362,21 +362,21 @@ def render_image_manager(post_dir: Path, order_key: str, prefix: str):
                         label_visibility="collapsed",
                     )
                     try:
-                        st.image(img_path, use_container_width=True)
+                        st.image(img_path, width='stretch')
                     except Exception:
                         st.write("⚠")
                     st.caption(f"**{idx+1}번** `{name}`")
                     bc1, bc2, bc3 = st.columns(3)
                     with bc1:
                         if st.button("↑", key=f"{prefix}_up_{idx}",
-                                     use_container_width=True, disabled=(idx == 0)):
+                                     width='stretch', disabled=(idx == 0)):
                             imgs[idx], imgs[idx - 1] = imgs[idx - 1], imgs[idx]
                             st.session_state[order_key] = imgs
                             save_img_order(post_dir, imgs)
                             st.rerun()
                     with bc2:
                         if st.button("↓", key=f"{prefix}_dn_{idx}",
-                                     use_container_width=True,
+                                     width='stretch',
                                      disabled=(idx == len(imgs) - 1)):
                             imgs[idx], imgs[idx + 1] = imgs[idx + 1], imgs[idx]
                             st.session_state[order_key] = imgs
@@ -384,7 +384,7 @@ def render_image_manager(post_dir: Path, order_key: str, prefix: str):
                             st.rerun()
                     with bc3:
                         if st.button("🗑", key=f"{prefix}_del_{idx}",
-                                     use_container_width=True):
+                                     width='stretch'):
                             Path(imgs[idx]).unlink(missing_ok=True)
                             imgs.pop(idx)
                             st.session_state[order_key] = imgs
@@ -513,7 +513,7 @@ with st.sidebar:
         st.markdown(f"{'🟢' if ok else '🔴'} {name}")
 
     st.divider()
-    if st.button("🔓 로그아웃", use_container_width=True):
+    if st.button("🔓 로그아웃", width='stretch'):
         st.session_state["authenticated"] = False
         if _COOKIES_OK:
             _cc.remove(_COOKIE_NAME)
@@ -652,7 +652,7 @@ with tab_editor:
                     if st.button(
                         f"📌 {display}",
                         key=f"trend_btn_{i}",
-                        use_container_width=True,
+                        width='stretch',
                         help=label,
                     ):
                         # 위젯 키를 직접 고치면 StreamlitAPIException 이 납니다.
@@ -669,7 +669,7 @@ with tab_editor:
     st.subheader("1  AI 원고 자동 생성")
     col_btn, col_hint = st.columns([1, 2])
     with col_btn:
-        go = st.button("✨ 블로그 원고 자동 생성", type="primary", use_container_width=True)
+        go = st.button("✨ 블로그 원고 자동 생성", type="primary", width='stretch')
     with col_hint:
         st.info(f"모드: **{mode}**  |  어조: **{persona}**  |  약 2~5분 소요")
 
@@ -750,7 +750,7 @@ with tab_editor:
                             unsafe_allow_html=True,
                         )
                         if st.button("✏️ 이어서 편집", key=f"resume_{_row_start}_{_off}",
-                                     use_container_width=True):
+                                     width='stretch'):
                             st.session_state["last_post_dir"]   = str(_p["dir"])
                             st.session_state["generation_done"] = True
                             st.session_state["editor_post_key"] = ""   # 아래에서 다시 로드
@@ -805,16 +805,16 @@ with tab_editor:
 
             c1, c2, c3 = st.columns(3)
             with c1:
-                if st.button("💾 저장", use_container_width=True, key="ed_save"):
+                if st.button("💾 저장", width='stretch', key="ed_save"):
                     (post_dir / "content.txt").write_text(new_content, encoding="utf-8")
                     st.toast("저장됐습니다 ✅")
             with c2:
-                if st.button("↩ 자동 줄바꿈", use_container_width=True, key="ed_break"):
+                if st.button("↩ 자동 줄바꿈", width='stretch', key="ed_break"):
                     st.session_state["edited_content"] = re.sub(
                         r"(?<![0-9])\.(\s|$)", ".\n\n", new_content)
                     st.rerun()
             with c3:
-                if st.button("📌 CTA 삽입", use_container_width=True, key="ed_cta"):
+                if st.button("📌 CTA 삽입", width='stretch', key="ed_cta"):
                     if cta_text.strip() and cta_text.strip() not in new_content:
                         st.session_state["edited_content"] = new_content + "\n\n" + cta_text.strip()
                         st.rerun()
@@ -848,7 +848,7 @@ with tab_editor:
                     )
                     if imgs and img_idx < len(imgs) and (i + 1) % insert_every == 0:
                         try:
-                            st.image(imgs[img_idx], use_container_width=True)
+                            st.image(imgs[img_idx], width='stretch')
                         except Exception:
                             st.caption(f"⚠ {Path(imgs[img_idx]).name}")
                         img_idx += 1
@@ -856,7 +856,7 @@ with tab_editor:
                 # 남은 이미지를 미리보기 맨 뒤에
                 while img_idx < len(imgs):
                     try:
-                        st.image(imgs[img_idx], use_container_width=True)
+                        st.image(imgs[img_idx], width='stretch')
                     except Exception:
                         st.caption(f"⚠ {Path(imgs[img_idx]).name}")
                     img_idx += 1
@@ -911,7 +911,7 @@ with tab_editor:
                 f"📋 예약 발행 등록 ({_sched_date} {_sched_time.strftime('%H:%M')})"
                 if use_schedule else "📋 즉시 발행 대기열 등록"
             )
-            if st.button(btn_label, type="primary", use_container_width=True, key="final_post_btn"):
+            if st.button(btn_label, type="primary", width='stretch', key="final_post_btn"):
                 content_now = st.session_state["edited_content"]
                 paras       = [p.strip() for p in content_now.split("\n\n") if p.strip()]
                 post_title  = paras[0] if paras else post_dir.name
@@ -941,7 +941,7 @@ with tab_editor:
                     st.error(f"❌ 등록 실패: {msg}")
         else:
             st.button("📋 최종 포스팅 (Supabase 미설정)", disabled=True,
-                      use_container_width=True, key="final_post_disabled")
+                      width='stretch', key="final_post_disabled")
             st.caption("시스템 상태 탭에서 SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 설정을 확인하세요.")
 
         st.divider()
@@ -963,7 +963,7 @@ with tab_editor:
             """, unsafe_allow_html=True)
             col_save_c, col_dl_c = st.columns(2)
             with col_save_c:
-                if st.button("💾 최신 상태 저장", use_container_width=True, key="save_before_zip"):
+                if st.button("💾 최신 상태 저장", width='stretch', key="save_before_zip"):
                     (post_dir / "content.txt").write_text(
                         st.session_state["edited_content"], encoding="utf-8")
                     save_img_order(post_dir, st.session_state["img_order"])
@@ -975,7 +975,7 @@ with tab_editor:
                     data=zip_bytes,
                     file_name=f"{post_dir.name}.zip",
                     mime="application/zip",
-                    use_container_width=True,
+                    width='stretch',
                     key="zip_download",
                 )
         else:
@@ -1008,7 +1008,7 @@ with tab_editor:
             col_up, col_dl = st.columns(2)
             with col_up:
                 if st.button("📤 네이버 블로그에 업로드", type="primary",
-                             use_container_width=True, key="upload_btn"):
+                             width='stretch', key="upload_btn"):
                     (post_dir / "content.txt").write_text(
                         st.session_state["edited_content"], encoding="utf-8")
                     save_img_order(post_dir, st.session_state["img_order"])
@@ -1031,7 +1031,7 @@ with tab_editor:
                         st.error(f"업로드 오류: {e}")
 
             with col_dl:
-                if st.button("💾 최신 상태 저장", use_container_width=True, key="save_before_zip"):
+                if st.button("💾 최신 상태 저장", width='stretch', key="save_before_zip"):
                     (post_dir / "content.txt").write_text(
                         st.session_state["edited_content"], encoding="utf-8")
                     save_img_order(post_dir, st.session_state["img_order"])
@@ -1043,7 +1043,7 @@ with tab_editor:
                     data=zip_bytes,
                     file_name=f"{post_dir.name}.zip",
                     mime="application/zip",
-                    use_container_width=True,
+                    width='stretch',
                     key="zip_download",
                 )
 
@@ -1089,7 +1089,7 @@ with tab_image:
 
             col_auto, col_reset = st.columns([1, 1])
             with col_auto:
-                if st.button("🤖 원고에서 자동 추출 (Gemini)", use_container_width=True,
+                if st.button("🤖 원고에서 자동 추출 (Gemini)", width='stretch',
                              key="auto_prompts_btn"):
                     content_file = post_dir / "content.txt"
                     if content_file.exists():
@@ -1103,7 +1103,7 @@ with tab_image:
                     else:
                         st.warning("content.txt 파일이 없습니다.")
             with col_reset:
-                if st.button("↩ 원래대로", use_container_width=True, key="reset_prompts_btn"):
+                if st.button("↩ 원래대로", width='stretch', key="reset_prompts_btn"):
                     st.session_state[prompt_key] = default_prompts
                     st.rerun()
 
@@ -1120,7 +1120,7 @@ with tab_image:
 
             col_save_p, col_spacer = st.columns([1, 3])
             with col_save_p:
-                if st.button("💾 프롬프트 저장", use_container_width=True, key="save_prompts_btn"):
+                if st.button("💾 프롬프트 저장", width='stretch', key="save_prompts_btn"):
                     prompts_file.write_text(prompt_text, encoding="utf-8")
                     st.toast("프롬프트 저장됐습니다 ✅")
 
@@ -1132,7 +1132,7 @@ with tab_image:
                     f"🚀 이미지 생성 ({len(prompt_lines)}장)",
                     type="primary",
                     disabled=(len(prompt_lines) == 0),
-                    use_container_width=True,
+                    width='stretch',
                     key="poll_gen_btn",
                 )
             with col_info:
@@ -1200,12 +1200,12 @@ with tab_image:
                         for j, img_path in enumerate(row_imgs):
                             with cols[j]:
                                 try:
-                                    st.image(img_path, use_container_width=True)
+                                    st.image(img_path, width='stretch')
                                 except Exception:
                                     st.write("⚠")
                                 st.caption(Path(img_path).name)
                                 if st.button("🗑", key=f"del_g_{row_s+j}",
-                                             use_container_width=True):
+                                             width='stretch'):
                                     Path(img_path).unlink(missing_ok=True)
                                     st.session_state[gallery_key].remove(img_path)
                                     st.rerun()
@@ -1257,7 +1257,7 @@ with tab_image:
                         c2 = st.columns(min(5, len(imgs_new)))
                         for i, p in enumerate(imgs_new):
                             with c2[i % 5]:
-                                st.image(p, caption=Path(p).name, use_container_width=True)
+                                st.image(p, caption=Path(p).name, width='stretch')
                 else:
                     st.warning("이미지를 수집하지 못했습니다. URL을 확인해주세요.")
 
@@ -1291,7 +1291,7 @@ with tab_image:
                         ck = st.columns(min(5, len(imgs_k)))
                         for i, p in enumerate(imgs_k):
                             with ck[i % 5]:
-                                st.image(p, caption=Path(p).name, use_container_width=True)
+                                st.image(p, caption=Path(p).name, width='stretch')
                 else:
                     st.warning("이미지를 찾지 못했습니다. 키워드를 바꿔보세요.")
 
@@ -1310,7 +1310,7 @@ with tab_image:
                     help="조감도, 평면도, 현장 사진 등을 올리면 그 분위기를 반영합니다.",
                 )
                 if uploaded:
-                    st.image(uploaded, caption="업로드된 참조 이미지", use_container_width=True)
+                    st.image(uploaded, caption="업로드된 참조 이미지", width='stretch')
 
             with col_form:
                 prompt_input = st.text_area(
@@ -1341,7 +1341,7 @@ with tab_image:
                 st.warning("이미지 설명(프롬프트)을 입력해주세요.")
 
             if st.button("🎨 이미지 생성 시작", type="primary",
-                         disabled=not can_gen, use_container_width=False, key="img2img_btn"):
+                         disabled=not can_gen, width='content', key="img2img_btn"):
                 from leonardo_generator import (
                     upload_init_image, generate_text_to_image,
                     generate_image_to_image, poll_until_complete, download_image,
@@ -1386,8 +1386,8 @@ with tab_image:
                             if download_image(url, str(sp_u)):
                                 saved_u.append(sp_u)
                                 with cols_u[i % 5]:
-                                    st.image(str(sp_u), caption=fname_u, use_container_width=True)
-                                    if st.button("🗑", key=f"del_u_{i}", use_container_width=True):
+                                    st.image(str(sp_u), caption=fname_u, width='stretch')
+                                    if st.button("🗑", key=f"del_u_{i}", width='stretch'):
                                         sp_u.unlink(missing_ok=True)
                                         st.rerun()
                         status_u.success(f"🎉 {len(saved_u)}장 생성 완료!  저장: {save_dir_u}")
@@ -1484,7 +1484,7 @@ section[data-testid="stFileUploadDropzone"] span {
                 for j, uf in enumerate(row_files):
                     with cols_p[j]:
                         try:
-                            st.image(uf, use_container_width=True)
+                            st.image(uf, width='stretch')
                         except Exception:
                             st.write("⚠")
                         target_num = effective_start + row_s + j
@@ -1502,7 +1502,7 @@ section[data-testid="stFileUploadDropzone"] span {
                 if st.button(
                     f"💾 {len(uploaded_files)}장 저장",
                     type="primary",
-                    use_container_width=True,
+                    width='stretch',
                     key="direct_save_btn",
                 ):
                     save_dir_d.mkdir(parents=True, exist_ok=True)
@@ -1574,7 +1574,7 @@ with tab_posts:
                     format_func=lambda i: _labels[i],
                     key="zip_scan_pick",
                 )
-                if st.button("📥 가져오기", type="primary", use_container_width=True,
+                if st.button("📥 가져오기", type="primary", width='stretch',
                              key="zip_scan_import_btn"):
                     try:
                         from zip_importer import import_cardnews_zip
@@ -1609,7 +1609,7 @@ with tab_posts:
             "ZIP 파일 직접 선택", type=["zip"], key="cardnews_zip_uploader"
         )
         if zip_file is not None and st.button(
-            "📥 업로드한 ZIP 임포트", use_container_width=True, key="zip_import_btn"
+            "📥 업로드한 ZIP 임포트", width='stretch', key="zip_import_btn"
         ):
             tmp_zip = BASE_DIR / f"_import_{zip_file.name}"
             try:
@@ -1643,7 +1643,7 @@ with tab_posts:
                 with _c1:
                     st.markdown(f"**{_p['name']}** — {cta_summary(_p)}")
                 with _c2:
-                    if st.button("삭제", key=f"cta_del_{_i}", use_container_width=True):
+                    if st.button("삭제", key=f"cta_del_{_i}", width='stretch'):
                         _cta_list.pop(_i)
                         save_presets(_cta_list)
                         st.rerun()
@@ -1671,7 +1671,7 @@ with tab_posts:
                                 placeholder=r"D:\...\배너.jpg")
             _mp = st.text_input("지도 주소", value=_base["map"],
                                 placeholder="경기 양주시 옥정동 ... (현장/홍보관 주소)")
-            _saved = st.form_submit_button("💾 저장", type="primary", use_container_width=True)
+            _saved = st.form_submit_button("💾 저장", type="primary", width='stretch')
 
         if _saved:
             if not _n.strip():
@@ -1710,12 +1710,14 @@ with tab_posts:
             except Exception:
                 return ""
 
-        labels = [
-            f"[{p['date']}]  {p['title']}"
-            + ("   ✅ 이미 발행함" if _post_first_line(p) in _done_titles else "")
-            for p in posts
-        ]
-        sel_idx = st.selectbox("포스트 선택", range(len(posts)), format_func=lambda i: labels[i])
+        # 드롭다운 라벨은 항상 같은 모양을 유지합니다.
+        # 예전에는 발행 여부에 따라 '✅ 이미 발행함' 을 라벨에 붙였는데,
+        # 글을 발행하면 옵션 목록이 바뀌어 선택이 첫 항목으로 튕겼습니다.
+        # 발행 여부는 아래 경고로 따로 알려줍니다.
+        labels = [f"[{p['date']}]  {p['title']}" for p in posts]
+        sel_idx = st.selectbox("포스트 선택", range(len(posts)),
+                               format_func=lambda i: labels[i],
+                               key="mgmt_post_sel")
 
         selected = posts[sel_idx]
         post_dir = selected["dir"]
@@ -1731,7 +1733,7 @@ with tab_posts:
             if IS_CLOUD:
                 # 클라우드: 네이버 봇 차단 → 버튼 비활성화
                 st.button("📤 로컬 PC 전용", disabled=True,
-                          use_container_width=True, key="mgmt_upload_disabled")
+                          width='stretch', key="mgmt_upload_disabled")
                 st.caption("원고 에디터 탭의 **대기열 등록** 을 이용하세요")
 
         # ── 발행 옵션 (CTA · 카테고리 · 공개설정) ──
@@ -1767,7 +1769,7 @@ with tab_posts:
                 )
 
             if st.button("📤 네이버 업로드", type="primary",
-                         use_container_width=True, key="mgmt_upload"):
+                         width='stretch', key="mgmt_upload"):
                 st.info("브라우저가 자동으로 열립니다. 입력이 끝나면 직접 [발행]을 눌러주세요.")
                 try:
                     from step2_upload import upload_to_naver_blog
@@ -1806,7 +1808,7 @@ with tab_posts:
 
         save_col, zip_col = st.columns(2)
         with save_col:
-            if st.button("💾 저장", use_container_width=True, key="mgmt_save"):
+            if st.button("💾 저장", width='stretch', key="mgmt_save"):
                 content_path.write_text(st.session_state[mgmt_content_key], encoding="utf-8")
                 st.toast("저장됐습니다 ✅")
         with zip_col:
@@ -1816,7 +1818,7 @@ with tab_posts:
                 data=zip_bytes,
                 file_name=f"{post_dir.name}.zip",
                 mime="application/zip",
-                use_container_width=True,
+                width='stretch',
                 key="mgmt_zip",
             )
 
@@ -1971,7 +1973,7 @@ with tab_status:
                     }
                     for r in _records[:50]
                 ]),
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
             )
             st.caption(f"최근 {min(len(_records), 50)}건 표시 · 전체 {len(_records)}건")
@@ -1989,7 +1991,7 @@ with tab_status:
     else:
         _ref_col, _csv_col = st.columns([1, 1])
         with _ref_col:
-            if st.button("🔄 대기열 새로고침", key="refresh_queue", use_container_width=True):
+            if st.button("🔄 대기열 새로고침", key="refresh_queue", width='stretch'):
                 st.rerun()
 
         with st.spinner("Supabase 조회 중..."):
@@ -2013,13 +2015,13 @@ with tab_status:
             _rs1, _rs2 = st.columns(2)
             with _rs1:
                 if st.button("↩️ 대기 상태로 되돌리기", type="primary",
-                             use_container_width=True, key="reset_stuck"):
+                             width='stretch', key="reset_stuck"):
                     from supabase_db import reset_stuck_rows
                     _n = reset_stuck_rows(_sb_url, _sb_key, [r.get("id") for r in _stuck])
                     st.success(f"✅ {_n}건을 대기 상태로 되돌렸습니다.")
                     st.rerun()
             with _rs2:
-                if st.button("🗑️ 멈춘 작업 삭제", use_container_width=True, key="del_stuck"):
+                if st.button("🗑️ 멈춘 작업 삭제", width='stretch', key="del_stuck"):
                     from supabase_db import delete_row
                     _n = sum(1 for r in _stuck if delete_row(_sb_url, _sb_key, r.get("id")))
                     st.success(f"✅ {_n}건 삭제했습니다.")
@@ -2032,7 +2034,7 @@ with tab_status:
                     "지워도 로컬 포스트 폴더와 발행 이력은 그대로 남습니다."
                 )
                 if st.button("🗑️ 완료·오류 항목 모두 삭제",
-                             use_container_width=True, key="clean_finished"):
+                             width='stretch', key="clean_finished"):
                     from supabase_db import delete_rows_by_status
                     _n = delete_rows_by_status(_sb_url, _sb_key, ["done", "error"])
                     st.success(f"✅ {_n}건 삭제했습니다.")
@@ -2056,7 +2058,7 @@ with tab_status:
 
             df = pd.DataFrame(rows)[_show_cols].copy()
             df["status"] = df["status"].map(lambda s: f"{status_colors.get(s,'⚪')} {s}")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width='stretch', hide_index=True)
 
             with _csv_col:
                 _csv_full = pd.DataFrame(rows)
@@ -2066,7 +2068,7 @@ with tab_status:
                     data=_csv_bytes,
                     file_name=f"publish_history_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width='stretch',
                     key="csv_dl_btn",
                 )
 
