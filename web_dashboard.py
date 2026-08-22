@@ -462,38 +462,10 @@ def _fetch_trends():
 with st.sidebar:
     st.header("⚙️ 마케팅 & 스타일 설정")
 
-    with st.expander("📂 1. 글쓰기 모드", expanded=True):
-        mode = st.radio(
-            "모드 선택",
-            ["뉴스 자동 크롤링", "키워드 검색 뉴스", "자유 주제 기획"],
-            key="mode_radio",
-        )
-        input_data = ""
-        if mode == "키워드 검색 뉴스":
-            input_data = st.text_input("검색 키워드", key="kw_input", placeholder="예: 마포 아파트 청약")
-        elif mode == "자유 주제 기획":
-            input_data = st.text_input("기획 주제", placeholder="예: 수익형 상가 투자법")
-
-        choice_map = {"뉴스 자동 크롤링": "1", "키워드 검색 뉴스": "2", "자유 주제 기획": "3"}
-        choice = choice_map[mode]
-
-    with st.expander("📂 2. 페르소나 설정 (말투)", expanded=True):
-        persona_options = [
-            "신뢰도 높은 전문 브리핑",
-            "친근한 이웃집 스타일",
-            "냉철한 시장 분석가",
-            "감성적인 스토리텔링",
-            "긴박한 분양/급매 뉴스",
-            "심플한 핵심 요약",
-        ]
-        persona = st.selectbox("블로그 작성 어조", persona_options)
-
-    with st.expander("📂 3. 추가 지시사항", expanded=False):
-        extra = st.text_area(
-            "AI에게 추가로 전달할 지침",
-            placeholder="예: 30대 신혼부부 타겟으로 작성\n예: 3.3㎡당 가격 비교표 반드시 포함",
-            height=100,
-        )
+    # 글감·말투·지시사항은 '원고 에디터' 탭 본문으로 옮겼습니다.
+    # 사이드바가 접혀 있으면 주제를 정할 방법이 아예 보이지 않아,
+    # 추천 뉴스로만 글을 쓸 수 있는 것처럼 보였기 때문입니다.
+    st.caption("✍️ 글감·말투·지시사항은 **원고 에디터** 탭에서 설정합니다.")
 
     with st.expander("📂 4. 미리보기 스타일", expanded=False):
         content_font_size = st.slider("본문 글씨 크기 (px)", 12, 24, 16)
@@ -665,13 +637,73 @@ with tab_editor:
 
     st.divider()
 
-    # ══ 섹션 1: 원고 생성 ══
-    st.subheader("1  AI 원고 자동 생성")
+    # ══ 섹션 1: 글감 정하기 ══
+    st.subheader("1  무엇에 대해 쓸까요?")
+
+    _MODE_LABELS = {
+        "뉴스 자동 크롤링": "📰 오늘의 부동산 뉴스로 (자동)",
+        "키워드 검색 뉴스": "🔍 키워드로 뉴스 찾아서",
+        "자유 주제 기획":   "✍️ 내가 정한 주제로",
+    }
+    # 옵션 '값'은 그대로 둡니다 — 트렌드 버튼이 이 값을 그대로 넣기 때문입니다.
+    mode = st.radio(
+        "글감 정하기",
+        list(_MODE_LABELS),
+        format_func=lambda m: _MODE_LABELS[m],
+        key="mode_radio",
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    input_data = ""
+    if mode == "뉴스 자동 크롤링":
+        st.caption("오늘 부동산 뉴스를 자동으로 모아 글을 씁니다. 따로 입력할 것이 없습니다.")
+    elif mode == "키워드 검색 뉴스":
+        input_data = st.text_input(
+            "검색 키워드", key="kw_input",
+            placeholder="예: 마포 아파트 청약",
+            help="이 키워드로 뉴스를 찾아 그 내용을 바탕으로 글을 씁니다.",
+        )
+        st.caption("위 트렌드 버튼을 누르면 키워드가 자동으로 채워집니다.")
+    else:  # 자유 주제 기획
+        input_data = st.text_input(
+            "쓰고 싶은 주제", key="topic_input",     # key 필수 - 없으면 입력이 사라집니다
+            placeholder="예: 수익형 상가 투자법 / 신혼부부 첫 집 마련 전략",
+            help="뉴스와 무관하게, 원하는 주제로 글을 기획해서 씁니다.",
+        )
+        st.caption("뉴스에 없는 내용도 쓸 수 있습니다. 주제를 구체적으로 적을수록 좋습니다.")
+
+    choice_map = {"뉴스 자동 크롤링": "1", "키워드 검색 뉴스": "2", "자유 주제 기획": "3"}
+    choice = choice_map[mode]
+
+    # ── 말투 · 추가 지시사항 ──
+    _p1, _p2 = st.columns([1, 2])
+    with _p1:
+        persona = st.selectbox(
+            "말투", [
+                "신뢰도 높은 전문 브리핑",
+                "친근한 이웃집 스타일",
+                "냉철한 시장 분석가",
+                "감성적인 스토리텔링",
+                "긴박한 분양/급매 뉴스",
+                "심플한 핵심 요약",
+            ],
+            key="persona_sel",
+        )
+    with _p2:
+        extra = st.text_input(
+            "추가 지시사항 (선택)", key="extra_input",
+            placeholder="예: 30대 신혼부부 타겟 / 3.3㎡당 가격 비교표 포함",
+            help="타겟 독자, 꼭 넣을 내용, 피할 표현 등을 자유롭게 적으세요.",
+        )
+
+    st.write("")
     col_btn, col_hint = st.columns([1, 2])
     with col_btn:
         go = st.button("✨ 블로그 원고 자동 생성", type="primary", width='stretch')
     with col_hint:
-        st.info(f"모드: **{mode}**  |  어조: **{persona}**  |  약 2~5분 소요")
+        _topic_note = f"주제: **{input_data.strip()}**  |  " if input_data.strip() else ""
+        st.info(f"{_topic_note}말투: **{persona}**  |  약 2~5분 소요")
 
     if go:
         if choice in ("2", "3") and not input_data.strip():

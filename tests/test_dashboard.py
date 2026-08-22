@@ -79,3 +79,38 @@ def test_로그인_게이트가_동작한다():
     at = _run_app(authenticated=False)
     _no_exception(at)
     assert len(at.tabs) == 0, "로그인 전에 탭이 노출되고 있습니다"
+
+
+@pytest.mark.slow
+def test_본문에서_직접_주제를_정할_수_있다():
+    """예전 문제: 글감 설정이 사이드바에만 있어서, 사이드바가 접히면
+    추천 뉴스로만 글을 쓸 수 있는 것처럼 보였다.
+    지금은 원고 에디터 본문에서 바로 주제를 정한다.
+    """
+    at = _run_app()
+    _no_exception(at)
+
+    mode = [r for r in at.radio if r.key == "mode_radio"]
+    assert mode, "본문에 글감 선택이 없습니다"
+
+    mode[0].set_value("자유 주제 기획").run()
+    _no_exception(at)
+
+    topic = [t for t in at.text_input if t.key == "topic_input"]
+    assert topic, "'내가 정한 주제' 입력란이 없습니다"
+
+
+@pytest.mark.slow
+def test_입력한_주제가_다른_조작에도_유지된다():
+    """예전 버그: 주제 입력란에 key 가 없어 리런 때마다 값이 사라졌다."""
+    at = _run_app()
+    _no_exception(at)
+
+    [r for r in at.radio if r.key == "mode_radio"][0].set_value("자유 주제 기획").run()
+    [t for t in at.text_input if t.key == "topic_input"][0].set_value("수익형 상가 투자법").run()
+    assert at.session_state["topic_input"] == "수익형 상가 투자법"
+
+    # 말투를 바꿔 리런을 유발해도 주제가 남아 있어야 한다.
+    [s for s in at.selectbox if s.key == "persona_sel"][0].set_value("친근한 이웃집 스타일").run()
+    _no_exception(at)
+    assert at.session_state["topic_input"] == "수익형 상가 투자법", "주제가 사라졌습니다"
