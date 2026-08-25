@@ -63,8 +63,9 @@ CREATE TABLE IF NOT EXISTS segments (
     seq             INTEGER NOT NULL,
     text            TEXT NOT NULL,
 
-    speaker         TEXT,          -- 'SPEAKER_00' 등 자동 분리 결과
-    speaker_label   TEXT,          -- '나' / '고객 홍○○' 등 사용자가 붙인 이름
+    speaker           TEXT,        -- 'SPEAKER_00' 등 자동 분리 결과
+    speaker_label     TEXT,        -- '나' / '고객 홍○○' 등 사용자가 붙인 이름
+    speaker_uncertain INTEGER DEFAULT 0,   -- 말이 겹쳐 누구 말인지 불확실
     start_sec       REAL,
     end_sec         REAL,
     page_no         INTEGER,
@@ -79,6 +80,7 @@ CREATE TABLE IF NOT EXISTS segments (
     confidence          REAL,      -- 0~1 종합 점수
     alt_text            TEXT,      -- 2차 모델 전사 결과
     alt_mismatch        INTEGER DEFAULT 0,
+    mismatch_kind       TEXT,      -- 부정어 뒤집힘 | 숫자 불일치 | 표현 불일치
     hallucination_risk  INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_seg_source ON segments(source_id, seq);
@@ -353,14 +355,16 @@ def add_segments(conn, source_id: int, rows: list[dict]) -> int:
     write_many(
         conn,
         """INSERT INTO segments
-           (source_id, seq, text, speaker, speaker_label, start_sec, end_sec,
+           (source_id, seq, text, speaker, speaker_label, speaker_uncertain,
+            start_sec, end_sec,
             page_no, occurred_at, words_json,
             avg_logprob, no_speech_prob, compression_ratio, confidence,
-            alt_text, alt_mismatch, hallucination_risk)
-           VALUES (:source_id,:seq,:text,:speaker,:speaker_label,:start_sec,:end_sec,
+            alt_text, alt_mismatch, mismatch_kind, hallucination_risk)
+           VALUES (:source_id,:seq,:text,:speaker,:speaker_label,:speaker_uncertain,
+                   :start_sec,:end_sec,
                    :page_no,:occurred_at,:words_json,
                    :avg_logprob,:no_speech_prob,:compression_ratio,:confidence,
-                   :alt_text,:alt_mismatch,:hallucination_risk)""",
+                   :alt_text,:alt_mismatch,:mismatch_kind,:hallucination_risk)""",
         [{**_SEG_DEFAULTS, "source_id": source_id, **r} for r in rows],
     )
     return len(rows)
@@ -368,10 +372,11 @@ def add_segments(conn, source_id: int, rows: list[dict]) -> int:
 
 _SEG_DEFAULTS = {
     "seq": 0, "text": "", "speaker": None, "speaker_label": None,
+    "speaker_uncertain": 0,
     "start_sec": None, "end_sec": None, "page_no": None, "occurred_at": None,
     "words_json": None, "avg_logprob": None, "no_speech_prob": None,
     "compression_ratio": None, "confidence": None, "alt_text": None,
-    "alt_mismatch": 0, "hallucination_risk": 0,
+    "alt_mismatch": 0, "mismatch_kind": None, "hallucination_risk": 0,
 }
 
 
