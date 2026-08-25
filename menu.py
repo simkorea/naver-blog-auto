@@ -14,6 +14,13 @@ except Exception:
     pass
 
 BASE = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE))
+
+# 시스템 파이썬으로 실행되면 venv 전용 패키지(playwright 등)를 못 찾습니다.
+# 어떤 방법으로 띄우든 venv 파이썬으로 맞춰줍니다.
+from venv_guard import ensure_venv  # noqa: E402
+
+ensure_venv()
 
 
 def _python() -> str:

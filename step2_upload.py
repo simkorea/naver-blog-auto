@@ -440,7 +440,16 @@ def upload_to_naver_blog(folder_path=None, headless=False, auto_publish=False,
     visibility : '전체공개' / '이웃공개' / '서로이웃공개' / '비공개'. 비우면 기본값
     """
     if not PLAYWRIGHT_OK:
-        print("[오류] playwright가 설치되지 않았습니다. pip install playwright 후 playwright install chromium 실행하세요.")
+        # 대부분은 '패키지가 없어서'가 아니라 '엉뚱한 파이썬으로 실행돼서' 입니다.
+        # 어느 파이썬으로 돌고 있는지 같이 보여줘야 원인을 바로 알 수 있습니다.
+        print("[오류] playwright 를 불러오지 못했습니다.")
+        print(f"       현재 파이썬: {sys.executable}")
+        if "venv" not in sys.executable.replace("\\", "/"):
+            print("       → venv 가 아닌 파이썬으로 실행되고 있습니다. 이것이 원인입니다.")
+            print("         대시보드를 완전히 닫고 '네이버 블로그 자동화' 바로가기로 다시 여세요.")
+        else:
+            print("       → 설치: venv\\Scripts\\python.exe -m pip install playwright")
+            print("               venv\\Scripts\\python.exe -m playwright install chromium")
         return
     if not NAVER_ID or not NAVER_PW or NAVER_ID == "your_naver_id":
         print("[오류] .env 파일에 네이버 계정 정보를 입력해주세요.")

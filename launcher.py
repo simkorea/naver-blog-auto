@@ -15,6 +15,15 @@ PORT = 8501
 BASE = Path(__file__).resolve().parent
 URL  = f"http://localhost:{PORT}"
 
+sys.path.insert(0, str(BASE))
+
+# 시스템 파이썬으로 뜨면 대시보드가 playwright 를 못 찾습니다.
+# 게다가 파이썬은 모듈을 한 번만 읽으므로, 잘못 뜬 대시보드는 살아 있는 동안
+# 계속 "playwright가 설치되지 않았습니다" 를 냅니다. 진입점에서 막습니다.
+from venv_guard import ensure_venv  # noqa: E402
+
+ensure_venv()
+
 
 def _port_open(port: int) -> bool:
     """해당 포트에서 이미 무언가 응답하는지 확인합니다."""

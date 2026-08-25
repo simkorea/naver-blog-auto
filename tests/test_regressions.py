@@ -229,3 +229,32 @@ def test_콘솔에_출력하는_파일에_cp949_불가문자가_없다(filename)
         except UnicodeEncodeError:
             bad.append(ch)
     assert not bad, f"{filename} 에 cp949 로 출력 못 하는 문자가 있습니다: {bad}"
+
+
+# ─────────────────────────────────────────────────────────────
+# 8. 시스템 파이썬으로 실행되면 playwright 를 못 찾던 문제
+#    파이썬은 모듈을 한 번만 읽으므로, 잘못 뜬 대시보드는 살아 있는 동안
+#    계속 실패한다. 진입점에서 venv 로 맞춰야 한다.
+# ─────────────────────────────────────────────────────────────
+
+def test_venv_감지가_동작한다():
+    import venv_guard
+
+    # 지금 테스트는 venv 파이썬으로 돌고 있어야 한다.
+    assert venv_guard.VENV_PYTHON.exists(), "venv 파이썬을 찾지 못했습니다"
+    assert venv_guard.running_in_venv(), (
+        f"테스트가 venv 밖에서 돌고 있습니다: {sys.executable}"
+    )
+
+
+def test_진입점들이_venv_가드를_쓴다():
+    """실행기를 어떻게 띄우든 venv 로 맞춰지도록, 진입점마다 가드가 있어야 한다."""
+    for entry in ("menu.py", "launcher.py"):
+        src = (BASE / entry).read_text(encoding="utf-8")
+        assert "ensure_venv()" in src, f"{entry} 에 venv 가드가 없습니다"
+
+
+def test_playwright를_venv에서_불러올_수_있다():
+    from step2_upload import PLAYWRIGHT_OK
+
+    assert PLAYWRIGHT_OK, "venv 에서 playwright 를 불러오지 못했습니다"
