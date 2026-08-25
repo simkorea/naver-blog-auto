@@ -36,6 +36,37 @@ _HALLUCINATION_PHRASES = [
 ]
 
 
+class ModelUnavailable(RuntimeError):
+    """모델을 못 가져왔다. 사람이 읽고 조치할 수 있는 메시지를 담는다."""
+
+
+def _download_hint(err: Exception) -> str:
+    """
+    모델 다운로드 실패는 원인이 대부분 네트워크다.
+    스택 트레이스 대신 무엇을 하면 되는지 알려준다.
+    """
+    text = f"{type(err).__name__} {err}".lower()
+    network = any(k in text for k in (
+        "proxy", "connection", "timeout", "resolve", "network",
+        "ssl", "403", "connecterror", "max retries", "unreachable"))
+
+    if network:
+        return (
+            "음성 인식 모델을 내려받지 못했습니다 (인터넷 연결 문제로 보입니다).\n"
+            "  · 인터넷 연결을 확인하세요.\n"
+            "  · 회사망·공용 와이파이는 huggingface.co를 막는 경우가 있습니다. "
+            "다른 네트워크에서 한 번만 받아두면 이후에는 인터넷 없이 동작합니다.\n"
+            "  · 미리 받아두기:  python evidence/setup_check.py --models"
+        )
+    if "out of memory" in text or "cuda" in text:
+        return (
+            "그래픽카드 메모리가 부족합니다.\n"
+            "  · 다른 프로그램을 닫고 다시 시도하세요.\n"
+            "  · 또는 .env에 WHISPER_PRIMARY=medium 을 넣어 작은 모델을 쓰세요."
+        )
+    return f"음성 인식 모델을 불러오지 못했습니다: {err}"
+
+
 def get_model(name: str):
     """모델을 한 번만 올려 재사용한다. 큰 모델은 로딩만 수십 초 걸린다."""
     if name in _models:
@@ -45,9 +76,12 @@ def get_model(name: str):
     hw = config.hardware()
     try:
         m = WhisperModel(name, device=hw["device"], compute_type=hw["compute_type"])
-    except Exception:
-        # GPU 메모리 부족 등 → CPU로 강등해서라도 돌아가게 한다
-        m = WhisperModel(name, device="cpu", compute_type="int8")
+    except BaseException as first:
+        try:
+            # GPU 메모리 부족 등 → CPU로 강등해서라도 돌아가게 한다
+            m = WhisperModel(name, device="cpu", compute_type="int8")
+        except BaseException as second:
+            raise ModelUnavailable(_download_hint(second or first)) from second
     _models[name] = m
     return m
 
@@ -123,12 +157,23 @@ def _hallucination_risk(text: str, seg) -> int:
 # ─────────────────────────────────────────────────────────
 # 전사
 # ─────────────────────────────────────────────────────────
-def transcribe(path, model_name: str = None, progress=None) -> list[dict]:
+def transcribe(path, model_name: str = None, progress=None,
+               preprocess_level: str = None) -> list[dict]:
     """
     한 파일을 전사한다. 돌려주는 값: 구간 목록.
+
+    preprocess_level: 잡음 제거 세기 (None이면 음질을 보고 알아서 정한다)
+      통화 녹음은 음질이 나빠 그대로 넣으면 인식률이 떨어진다.
+      전처리 사본을 만들어 전사에만 쓰고, 원본은 건드리지 않는다.
     """
     model_name = model_name or config.WHISPER_PRIMARY
     model = get_model(model_name)
+
+    # 전처리 — 실패해도 원본으로 계속 진행한다
+    from . import preprocess
+    if preprocess_level is None:
+        preprocess_level = preprocess.probe(path).get("suggested", "standard")
+    work_path, prep_note = preprocess.prepare(path, preprocess_level)
 
     opts = config.whisper_options()
     prompt = _prompt_from_terms(case_terms())
@@ -138,11 +183,11 @@ def transcribe(path, model_name: str = None, progress=None) -> list[dict]:
         opts["initial_prompt"] = prompt
 
     try:
-        segments, info = model.transcribe(str(path), **opts)
+        segments, info = model.transcribe(str(work_path), **opts)
     except TypeError:
         # 설치된 faster-whisper 버전이 hotwords를 모르면 빼고 재시도
         opts.pop("hotwords", None)
-        segments, info = model.transcribe(str(path), **opts)
+        segments, info = model.transcribe(str(work_path), **opts)
 
     total = getattr(info, "duration", None) or 0
     rows = []
@@ -176,14 +221,16 @@ def transcribe(path, model_name: str = None, progress=None) -> list[dict]:
 
 
 def extract(conn, source_row, cross_verify: bool = None,
-            diarize: bool = False, progress=None, **_) -> int:
+            diarize: bool = False, preprocess_level: str = None,
+            progress=None, **_) -> int:
     """
-    녹음 하나를 처리한다: 전사 → (교차 검증) → (화자 분리)
+    녹음 하나를 처리한다: (전처리) → 전사 → (교차 검증) → (화자 분리)
     """
     cross_verify = config.CROSS_VERIFY if cross_verify is None else cross_verify
     path = Path(source_row["path"])
 
-    rows = transcribe(path, config.WHISPER_PRIMARY, progress=progress)
+    rows = transcribe(path, config.WHISPER_PRIMARY, progress=progress,
+                      preprocess_level=preprocess_level)
     if not rows:
         db.set_status(conn, source_row["id"], "extracted", "인식된 음성 없음")
         return 0
@@ -194,7 +241,8 @@ def extract(conn, source_row, cross_verify: bool = None,
     if cross_verify:
         from . import verify
         try:
-            rows = verify.cross_check(path, rows, progress=progress)
+            rows = verify.cross_check(path, rows, progress=progress,
+                                      preprocess_level=preprocess_level)
             mismatched = sum(r.get("alt_mismatch", 0) for r in rows)
             detail += f" · 확인 필요 {mismatched}건"
         except Exception as e:
@@ -217,5 +265,6 @@ def extract(conn, source_row, cross_verify: bool = None,
     db.set_status(conn, source_row["id"], "extracted", detail)
     integrity.log("extract_audio", source_id=source_row["id"], segments=n,
                   model=config.WHISPER_PRIMARY, cross_verify=cross_verify,
-                  diarize=diarize, hotwords=bool(case_terms()))
+                  diarize=diarize, hotwords=bool(case_terms()),
+                  preprocess=preprocess_level)
     return n

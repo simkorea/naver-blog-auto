@@ -38,8 +38,15 @@ def _load():
         return _model
     except BaseException as e:
         _load_failed = True
-        print(f"        [안내] 의미 검색 비활성화 ({type(e).__name__}) — 키워드 검색은 정상 동작합니다")
-        print(f"               설치: pip install sentence-transformers")
+        text = f"{type(e).__name__} {e}".lower()
+        if any(k in text for k in ("proxy", "connection", "timeout", "403",
+                                   "resolve", "network", "max retries")):
+            print("        [안내] 의미 검색 모델을 내려받지 못했습니다 (인터넷 연결 문제)")
+            print("               미리 받아두기: python evidence/setup_check.py --models")
+        else:
+            print(f"        [안내] 의미 검색 비활성화 ({type(e).__name__})")
+            print("               설치: pip install sentence-transformers")
+        print("               키워드 검색은 정상 동작합니다.")
         return None
 
 

@@ -50,6 +50,12 @@ def render(conn):
             "GPU가 감지되지 않아 CPU로 처리합니다. 1시간 녹음에 20~40분이 걸릴 수 있습니다."
         )
 
+    st.caption(
+        "처음 전사할 때 음성 인식 모델을 내려받습니다(약 1.5GB, 몇 분). "
+        "미리 받아두려면 명령 프롬프트에서 "
+        "`python evidence/setup_check.py --models` 를 실행하세요."
+    )
+
     c1, c2 = st.columns(2)
     cross = c1.checkbox(
         "이중 모델 교차 검증", value=config.CROSS_VERIFY,
@@ -68,10 +74,26 @@ def render(conn):
             "`pyannote/speaker-diarization-3.1` 모델 페이지에서 이용 약관에 동의하세요."
         )
 
+    prep = st.selectbox(
+        "음성 전처리",
+        ["auto", "light", "standard", "strong", "none"],
+        format_func=lambda k: {
+            "auto": "자동 (음질을 보고 알아서 — 권장)",
+            "light": "약하게 (음질이 좋은 녹음)",
+            "standard": "보통",
+            "strong": "세게 (잡음이 심한 통화)",
+            "none": "안 함 (원본 그대로 전사)",
+        }[k],
+        help="전사하기 전에 잡음을 줄이고 음량을 고르게 맞춥니다. "
+             "통화 녹음은 음질이 나빠 이걸 거치면 인식률이 눈에 띄게 오릅니다. "
+             "원본은 건드리지 않고 임시 사본을 만들어 씁니다.",
+    )
+
     _terms_editor()
 
     if st.button("녹음 전사 시작", type="primary", disabled=not pend_audio):
-        _run(conn, kinds=(config.KIND_AUDIO,), cross_verify=cross, diarize=diar)
+        _run(conn, kinds=(config.KIND_AUDIO,), cross_verify=cross, diarize=diar,
+             preprocess_level=(None if prep == "auto" else prep))
 
     st.divider()
     _status_table(conn)

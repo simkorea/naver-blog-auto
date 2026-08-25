@@ -12,6 +12,7 @@
   5 타임라인     전 자료를 하나의 시간축에
   6 법률 코멘트  관련 조문·판례 (인용 검증 통과분만)
   7 제출 패키지  발췌본 추출 + 폴더 일괄 생성
+  8 도구         백업·복원 · 내보내기 · 정리 · 처리 이력
 """
 import sys
 from pathlib import Path
@@ -25,7 +26,7 @@ import streamlit as st
 
 from evidence import config, db
 from evidence.ui import (tab_register, tab_analyze, tab_speakers, tab_search,
-                         tab_timeline, tab_legal, tab_package)
+                         tab_timeline, tab_legal, tab_package, tab_tools)
 
 st.set_page_config(page_title="증거파인더", page_icon="🔎", layout="wide")
 
@@ -79,7 +80,7 @@ def main():
 
     tabs = st.tabs([
         "① 자료 등록", "② 분석 실행", "③ 화자 지정", "④ 검색",
-        "⑤ 타임라인", "⑥ 법률 코멘트", "⑦ 제출 패키지",
+        "⑤ 타임라인", "⑥ 법률 코멘트", "⑦ 제출 패키지", "⑧ 도구",
     ])
     with tabs[0]:
         tab_register.render(conn)
@@ -95,6 +96,8 @@ def main():
         tab_legal.render(conn)
     with tabs[6]:
         tab_package.render(conn)
+    with tabs[7]:
+        tab_tools.render(conn)
 
 
 if __name__ == "__main__":

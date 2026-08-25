@@ -118,7 +118,7 @@ def align(primary: list[dict], secondary: list[dict]) -> list[tuple]:
 
 
 def cross_check(path, primary: list[dict], model_name: str = None,
-                progress=None) -> list[dict]:
+                progress=None, preprocess_level: str = None) -> list[dict]:
     """
     2차 모델로 다시 전사해 1차 결과와 대조한다.
 
@@ -131,7 +131,8 @@ def cross_check(path, primary: list[dict], model_name: str = None,
     if model_name == config.WHISPER_PRIMARY:
         return primary          # 같은 모델이면 대조 의미가 없다
 
-    secondary = audio.transcribe(path, model_name, progress=progress)
+    secondary = audio.transcribe(path, model_name, progress=progress,
+                                 preprocess_level=preprocess_level)
     if not secondary:
         return primary
 

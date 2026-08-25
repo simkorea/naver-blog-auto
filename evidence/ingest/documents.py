@@ -43,21 +43,41 @@ def _chunk(text: str, page_no=None, limit: int = MAX_CHARS) -> list[dict]:
 # ─────────────────────────────────────────────────────────
 # 형식별 추출
 # ─────────────────────────────────────────────────────────
-def from_pdf(path) -> list[dict]:
-    """페이지 번호를 보존해 추출. 표는 행 단위로 펼친다."""
+# 이 글자 수보다 적게 나오면 스캔한 페이지로 본다.
+# 스캔본은 글자가 그림 안에 있어 pdfplumber로는 아무것도 안 나온다.
+SCANNED_THRESHOLD = 30
+
+
+def from_pdf(path, ocr_scanned: bool = True) -> list[dict]:
+    """
+    페이지 번호를 보존해 추출. 표는 행 단위로 펼친다.
+
+    계약서는 스캔본인 경우가 아주 흔하다. 그런 PDF는 글자가 그림으로
+    들어 있어 텍스트 추출로는 한 글자도 안 나온다. 그대로 두면
+    "계약서를 넣었는데 검색이 안 된다"가 된다.
+    그래서 글자가 거의 없는 페이지는 이미지로 렌더링해 OCR로 읽는다.
+    """
     try:
         import pdfplumber
     except ImportError:
         raise RuntimeError("PDF 추출에는 pdfplumber가 필요합니다 → pip install pdfplumber")
 
     segs = []
+    scanned_pages = []
+
     with pdfplumber.open(path) as pdf:
         for page_no, page in enumerate(pdf.pages, 1):
             text = page.extract_text() or ""
+            tables = page.extract_tables() or []
+
+            if len(text.strip()) < SCANNED_THRESHOLD and not tables:
+                scanned_pages.append(page_no)
+                continue
+
             segs.extend(_chunk(text, page_no))
 
             # 계약서의 핵심 정보는 표 안에 있는 경우가 많다
-            for table in (page.extract_tables() or []):
+            for table in tables:
                 rows = [
                     " | ".join((c or "").strip() for c in row if c is not None)
                     for row in table
@@ -65,7 +85,75 @@ def from_pdf(path) -> list[dict]:
                 body = "\n".join(r for r in rows if r.strip(" |"))
                 if body.strip():
                     segs.extend(_chunk(f"[표]\n{body}", page_no))
-    return segs
+
+    if scanned_pages and ocr_scanned:
+        segs.extend(_ocr_pdf_pages(path, scanned_pages))
+
+    return sorted(segs, key=lambda s: (s.get("page_no") or 0))
+
+
+def _ocr_pdf_pages(path, page_numbers: list[int]) -> list[dict]:
+    """
+    스캔한 페이지를 이미지로 렌더링해 글자를 읽는다.
+
+    렌더링 해상도를 200dpi로 올린다. 기본 72dpi로는 한글 인식률이
+    크게 떨어진다 — 계약서 조항을 놓치면 의미가 없다.
+    """
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        print("        [안내] 스캔 PDF 글자 읽기 건너뜀 → pip install pypdfium2")
+        return []
+
+    from .images import get_reader
+    reader = get_reader()
+    if reader is None:
+        print("        [안내] 스캔 PDF 글자 읽기 건너뜀 (easyocr 미설치)")
+        return []
+
+    import tempfile
+
+    out = []
+    doc = pdfium.PdfDocument(str(path))
+    try:
+        for page_no in page_numbers:
+            try:
+                page = doc[page_no - 1]
+            except IndexError:
+                continue
+            # scale 2.78 ≒ 200dpi (기본 72dpi 기준)
+            bitmap = page.render(scale=200 / 72)
+            image = bitmap.to_pil()
+
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp_path = tmp.name
+            try:
+                image.save(tmp_path)
+                lines = reader.readtext(tmp_path, detail=1, paragraph=False)
+                text = "\n".join(
+                    item[1].strip() for item in lines
+                    if len(item) > 1 and str(item[1]).strip()
+                )
+                if not text.strip():
+                    continue
+                confs = [float(i[2]) for i in lines if len(i) > 2]
+                avg = sum(confs) / len(confs) if confs else 0.0
+                for seg in _chunk(f"[스캔 페이지 · 글자 인식]\n{text}", page_no):
+                    seg["confidence"] = round(avg, 3)
+                    # 인식이 흐릿하면 원본 PDF를 직접 봐야 한다
+                    seg["hallucination_risk"] = 1 if avg < 0.6 else 0
+                    out.append(seg)
+            finally:
+                try:
+                    Path(tmp_path).unlink()
+                except OSError:
+                    pass
+    finally:
+        doc.close()
+
+    if out:
+        print(f"        스캔 페이지 {len(page_numbers)}쪽을 글자 인식으로 읽었습니다")
+    return out
 
 
 def from_docx(path) -> list[dict]:
