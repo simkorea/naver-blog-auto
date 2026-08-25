@@ -1,0 +1,43 @@
+# ════════════════════════════════════════════════════════════
+#  증거파인더 의존성
+#  설치:  pip install -r evidence/requirements-evidence.txt
+#
+#  ※ NVIDIA GPU 사용 시 torch는 CUDA 빌드로 별도 설치할 것:
+#     pip install torch --index-url https://download.pytorch.org/whl/cu124
+#     (먼저 이 명령을 실행한 뒤 아래 requirements를 설치하세요)
+# ════════════════════════════════════════════════════════════
+
+# ── 화면 ──────────────────────────────────────
+streamlit>=1.40
+
+# ── 음성 인식 ─────────────────────────────────
+faster-whisper>=1.1.0
+
+# ── 화자 분리 (선택: 없으면 화자 분리만 건너뜀) ──
+pyannote.audio>=3.3.0
+
+# ── 의미 검색 (선택: 없으면 키워드 검색만 동작) ──
+sentence-transformers>=3.0.0
+sqlite-vec>=0.1.6
+
+# ── 문서 텍스트 추출 ───────────────────────────
+pdfplumber>=0.11.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+
+# ── 이미지 OCR (기존 image_fetcher.py와 공유) ──
+easyocr>=1.7.0
+Pillow>=10.0.0
+
+# ── 오디오 구간 추출 (ffmpeg 바이너리 동봉) ────
+imageio-ffmpeg>=0.5.1
+
+# ── 법령·판례 조회 ─────────────────────────────
+requests>=2.31.0
+
+# ── 설정 ──────────────────────────────────────
+PyYAML>=6.0
+python-dotenv>=1.0.0
+
+# ── 선택적 LLM 태깅 (OFFLINE_ONLY=false 일 때만) ──
+google-generativeai>=0.8.0

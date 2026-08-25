@@ -22,3 +22,23 @@ __pycache__/
 # OS
 Thumbs.db
 .DS_Store
+
+# ─────────────────────────────────────────────
+# 증거파인더 (evidence/) — 소송 자료는 절대 커밋 금지
+# ─────────────────────────────────────────────
+evidence.db
+evidence.db-journal
+evidence.db-wal
+evidence.db-shm
+evidence_work/
+증거자료/
+제출_*/
+*.jsonl
+evidence/case_terms.yaml
+evidence/keywords.yaml
+evidence/law_scope.yaml
+law_cache/
+
+# 로컬 모델 캐시
+.cache/huggingface/
+models/
