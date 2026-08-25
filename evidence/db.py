@@ -18,6 +18,7 @@ SQLite 저장소 — 전부 한 파일(evidence.db) 안에 들어간다.
   불가능해 LIKE로 넘긴다(이때도 trigram 인덱스가 LIKE를 가속한다).
 """
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -222,11 +223,36 @@ CREATE TABLE IF NOT EXISTS meta (
 # ─────────────────────────────────────────────────────────
 # 연결
 # ─────────────────────────────────────────────────────────
+# Streamlit은 화면을 다시 그릴 때마다 새 스레드에서 스크립트를 실행한다.
+# 연결 하나를 캐시해 재사용하려면 스레드 검사를 꺼야 하고, 대신 쓰기를
+# 직렬화해 동시 기록이 겹치지 않게 한다.
+_write_lock = threading.RLock()
+
+
 def connect(path=None) -> sqlite3.Connection:
-    conn = sqlite3.connect(path or config.DB_PATH, timeout=30)
+    conn = sqlite3.connect(
+        path or config.DB_PATH,
+        timeout=30,
+        check_same_thread=False,
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
+
+
+def write(conn, sql, args=()):
+    """쓰기 한 건. 스레드 간 충돌을 막기 위해 잠금 안에서 실행한다."""
+    with _write_lock:
+        cur = conn.execute(sql, args)
+        conn.commit()
+        return cur
+
+
+def write_many(conn, sql, rows):
+    with _write_lock:
+        conn.executemany(sql, rows)
+        conn.commit()
 
 
 def init(path=None) -> sqlite3.Connection:
@@ -262,7 +288,7 @@ def _init_vec(conn) -> bool:
         )
         conn.commit()
         return True
-    except Exception:
+    except BaseException:
         return False
 
 
@@ -284,50 +310,48 @@ def add_source(conn, fp: dict, kind: str, **extra) -> tuple[int, bool]:
     같은 해시가 이미 있으면 같은 파일이므로 등록하지 않는다
     (같은 녹음을 여러 폴더에 복사해둔 경우가 흔하다).
     """
-    dup = conn.execute(
-        "SELECT id FROM sources WHERE sha256 = ?", (fp["sha256"],)
-    ).fetchone()
-    if dup:
-        return dup["id"], False
+    with _write_lock:
+        dup = conn.execute(
+            "SELECT id FROM sources WHERE sha256 = ?", (fp["sha256"],)
+        ).fetchone()
+        if dup:
+            return dup["id"], False
 
-    cur = conn.execute(
-        """INSERT INTO sources
-           (path, sha256, kind, bytes, mtime, duration_sec,
-            is_my_conversation, counterparty, occurred_at, occurred_at_est,
-            memo, ingested_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (fp["path"], fp["sha256"], kind, fp["bytes"], fp["mtime"],
-         extra.get("duration_sec"),
-         extra.get("is_my_conversation", "UNKNOWN"),
-         extra.get("counterparty"),
-         extra.get("occurred_at"),
-         1 if extra.get("occurred_at_est") else 0,
-         extra.get("memo"),
-         datetime.now().isoformat(timespec="seconds")),
-    )
-    conn.commit()
-    return cur.lastrowid, True
+        cur = conn.execute(
+            """INSERT INTO sources
+               (path, sha256, kind, bytes, mtime, duration_sec,
+                is_my_conversation, counterparty, occurred_at, occurred_at_est,
+                memo, ingested_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (fp["path"], fp["sha256"], kind, fp["bytes"], fp["mtime"],
+             extra.get("duration_sec"),
+             extra.get("is_my_conversation", "UNKNOWN"),
+             extra.get("counterparty"),
+             extra.get("occurred_at"),
+             1 if extra.get("occurred_at_est") else 0,
+             extra.get("memo"),
+             datetime.now().isoformat(timespec="seconds")),
+        )
+        conn.commit()
+        return cur.lastrowid, True
 
 
 def set_status(conn, source_id: int, status: str, detail: str = None) -> None:
-    conn.execute(
-        "UPDATE sources SET status = ?, status_detail = ? WHERE id = ?",
-        (status, detail, source_id),
-    )
-    conn.commit()
+    write(conn, "UPDATE sources SET status = ?, status_detail = ? WHERE id = ?",
+          (status, detail, source_id))
 
 
 def clear_segments(conn, source_id: int) -> None:
     """재처리 전 기존 구간을 지운다."""
-    conn.execute("DELETE FROM segments WHERE source_id = ?", (source_id,))
-    conn.commit()
+    write(conn, "DELETE FROM segments WHERE source_id = ?", (source_id,))
 
 
 def add_segments(conn, source_id: int, rows: list[dict]) -> int:
     """구간 일괄 저장."""
     if not rows:
         return 0
-    conn.executemany(
+    write_many(
+        conn,
         """INSERT INTO segments
            (source_id, seq, text, speaker, speaker_label, start_sec, end_sec,
             page_no, occurred_at, words_json,
@@ -339,7 +363,6 @@ def add_segments(conn, source_id: int, rows: list[dict]) -> int:
                    :alt_text,:alt_mismatch,:hallucination_risk)""",
         [{**_SEG_DEFAULTS, "source_id": source_id, **r} for r in rows],
     )
-    conn.commit()
     return len(rows)
 
 

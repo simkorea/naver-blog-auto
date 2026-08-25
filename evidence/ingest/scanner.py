@@ -116,8 +116,26 @@ def walk(folder) -> list[Path]:
             continue
         if config.classify(p) is None:
             continue
+        if _is_kakao_continuation(p):
+            # 카카오톡은 대화가 길면 1MB 단위로 파일을 쪼갠다.
+            # 첫 조각을 파싱할 때 뒷조각까지 이어 붙이므로, 뒷조각을 따로
+            # 등록하면 같은 메시지가 두 번 들어간다.
+            continue
         found.append(p)
     return sorted(found)
+
+
+def _is_kakao_continuation(p: Path) -> bool:
+    """KakaoTalk_Chats_2.txt 처럼 앞 조각이 존재하는 뒷조각인지 판별."""
+    if p.suffix.lower() != ".txt":
+        return False
+    m = re.match(r"^(?P<base>.+)_(?P<n>\d+)$", p.stem)
+    if not m or int(m.group("n")) < 2:
+        return False
+    first = p.parent / f"{m.group('base')}{p.suffix}"
+    if not first.exists():
+        return False
+    return config.classify(first) == config.KIND_KAKAO
 
 
 def scan(conn, folder, progress=None, defaults: dict = None) -> dict:
@@ -193,6 +211,5 @@ def update_source(conn, source_id: int, **fields) -> None:
     if not sets:
         return
     args.append(source_id)
-    conn.execute(f"UPDATE sources SET {', '.join(sets)} WHERE id = ?", args)
-    conn.commit()
+    db.write(conn, f"UPDATE sources SET {', '.join(sets)} WHERE id = ?", args)
     integrity.log("source_updated", source_id=source_id, **fields)

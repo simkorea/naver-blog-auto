@@ -96,7 +96,7 @@ def hardware() -> dict:
             # 맥(Apple Silicon). faster-whisper는 mps를 직접 지원하지 않아 CPU로 두되
             # 임베딩 모델은 mps를 쓸 수 있게 표시만 남긴다.
             info["embed_device"] = "mps"
-    except Exception:
+    except BaseException:
         pass
 
     info.setdefault("embed_device", info["device"])
@@ -192,7 +192,7 @@ def ffmpeg_path() -> str | None:
     try:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
+    except BaseException:
         return shutil.which("ffmpeg")
 
 
@@ -222,11 +222,17 @@ def diagnose() -> list[tuple[str, bool, str]]:
         ("이미지 OCR", "easyocr", "easyocr"),
     ]
     for label, module, pkg in checks:
+        # BaseException까지 잡는다. 네이티브 확장이 깨져 있으면 Exception이 아니라
+        # 인터프리터 수준 패닉(pyo3 PanicException 등)이 올라오는데, 그것 하나 때문에
+        # 프로그램 전체가 죽어서는 안 된다.
         try:
             __import__(module)
             out.append((label, True, "설치됨"))
-        except Exception:
+        except ImportError:
             out.append((label, False, f"미설치 → pip install {pkg}"))
+        except BaseException as e:
+            out.append((label, False, f"설치되었으나 불러오지 못함 ({type(e).__name__}) "
+                                      f"→ pip install --force-reinstall {pkg}"))
 
     out.append(("ffmpeg", bool(ffmpeg_path()),
                 ffmpeg_path() or "미설치 → pip install imageio-ffmpeg"))

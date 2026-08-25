@@ -36,7 +36,7 @@ def _load():
             device=hw.get("embed_device", "cpu"),
         )
         return _model
-    except Exception as e:
+    except BaseException as e:
         _load_failed = True
         print(f"        [안내] 의미 검색 비활성화 ({type(e).__name__}) — 키워드 검색은 정상 동작합니다")
         print(f"               설치: pip install sentence-transformers")
@@ -95,9 +95,9 @@ def build_index(conn, progress=None, only_missing: bool = True) -> int:
     if vecs is None:
         return 0
 
-    conn.executemany(
+    db.write_many(
+        conn,
         "INSERT OR REPLACE INTO vec_segments(segment_id, embedding) VALUES (?, ?)",
         [(sid, serialize(v)) for sid, v in zip(ids, vecs)],
     )
-    conn.commit()
     return len(ids)
