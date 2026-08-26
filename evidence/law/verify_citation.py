@@ -214,6 +214,11 @@ def verify_all(conn, online: bool = True, progress=None) -> dict:
 
 def _main():
     import argparse
+
+    from ..console import marks, setup as console_setup
+    console_setup()
+    m = marks()
+
     ap = argparse.ArgumentParser(description="법률 코멘트 인용 실존 검증")
     ap.add_argument("--all", action="store_true", help="모든 코멘트 재검증")
     ap.add_argument("--offline", action="store_true",
@@ -232,7 +237,7 @@ def _main():
 
     res = verify_all(conn, online=not args.offline, progress=show)
     print(" " * 40, end="\r")
-    print("─" * 60)
+    print(m["line"] * 60)
     print(f"  통과 {res['verified']}건 / 차단 {res['blocked']}건 / 전체 {res['total']}건")
     if res["details"]:
         print("\n  차단된 코멘트:")
@@ -241,7 +246,7 @@ def _main():
             for p in d["problems"]:
                 print(f"        · {p}")
         print("\n  차단된 코멘트는 화면과 문서에 표시되지 않습니다.")
-    print("─" * 60)
+    print(m["line"] * 60)
 
 
 if __name__ == "__main__":

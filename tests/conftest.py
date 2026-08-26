@@ -153,10 +153,12 @@ class Check:
         return self.ok(got == want, label, f"기대 {want!r} / 실제 {got!r}")
 
     def report(self) -> bool:
-        mark = "✅" if not self.failed else "❌"
-        print(f"\n{mark} {self.title} — 통과 {len(self.passed)} / 실패 {len(self.failed)}")
+        from evidence.console import marks
+        m = marks()
+        mark = m["ok"] if not self.failed else m["no"]
+        print(f"\n{mark} {self.title} - 통과 {len(self.passed)} / 실패 {len(self.failed)}")
         for label, detail in self.failed:
-            print(f"     ✗ {label}")
+            print(f"     {m['no']} {label}")
             if detail:
                 print(f"        {detail}")
         return not self.failed

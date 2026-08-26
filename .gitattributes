@@ -1,0 +1,10 @@
+# 윈도우 배치 파일은 반드시 CRLF 로 내려가야 한다.
+# LF 로 가면 if (...) 블록과 set /p 입력이 깨진다.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 나머지는 LF 유지
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yaml text eol=lf

@@ -71,12 +71,22 @@ python evidence/setup_check.py --models   AI 모델 미리 받기 (약 4GB)
 
 ### 바로가기 파일
 
+`evidence` 폴더 안에 있습니다. 더블클릭하면 됩니다.
+
 | 파일 | 하는 일 |
 |---|---|
-| `설치.bat` | 필요한 것 설치 |
+| `설치.bat` | 필요한 것 설치 (그래픽카드 자동 감지) |
 | `실행.bat` | 프로그램 시작 |
 | `백업.bat` | 분석 결과 백업 |
 | `무결성확인.bat` | 원본이 그대로인지 확인 |
+
+### 내려받기
+
+GitHub `simkorea/naver-blog-auto` → 브랜치를
+`claude/file-voice-analysis-program-lb7qi8` 로 바꾸고 → **Code → Download ZIP**.
+
+압축을 풀 때 **경로에 한글이나 공백이 있어도 괜찮습니다.**
+(`C:\Users\사용자\바탕 화면\` 같은 경로도 동작하게 만들었습니다)
 
 ## 인증키 발급 (선택)
 

@@ -15,7 +15,14 @@ import time
 import traceback
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent))
+
+from evidence.console import marks, setup as _console_setup
+
+_console_setup()
+M = marks()
 
 SUITES = [
     ("음성 파이프라인", "test_audio_pipeline",
@@ -32,9 +39,9 @@ SUITES = [
 
 
 def main() -> int:
-    print("═" * 70)
+    print(M["dline"] * 70)
     print("  증거파인더 전체 검증")
-    print("═" * 70)
+    print(M["dline"] * 70)
 
     results = []
     started = time.time()
@@ -49,18 +56,18 @@ def main() -> int:
             results.append((title, ok, None))
         except Exception as e:
             results.append((title, False, f"{type(e).__name__}: {e}"))
-            print(f"\n❌ {title} — 실행 중 오류")
+            print(f"\n{M['no']} {title} - 실행 중 오류")
             traceback.print_exc(limit=4)
 
     elapsed = time.time() - started
     passed = [t for t, ok, _ in results if ok]
     failed = [(t, err) for t, ok, err in results if not ok]
 
-    print("\n" + "═" * 70)
+    print("\n" + M["dline"] * 70)
     for title, ok, err in results:
-        print(f"  {'✅' if ok else '❌'} {title}" + (f"  ({err})" if err else ""))
-    print("─" * 70)
-    print(f"  묶음 {len(passed)}/{len(results)} 통과　·　{elapsed:.1f}초")
+        print(f"  {M['ok'] if ok else M['no']} {title}" + (f"  ({err})" if err else ""))
+    print(M["line"] * 70)
+    print(f"  묶음 {len(passed)}/{len(results)} 통과  {M['dot']}  {elapsed:.1f}초")
 
     if failed:
         print("\n  실패한 묶음을 따로 돌려 자세히 보세요:")
@@ -73,7 +80,7 @@ def main() -> int:
         print("    · Whisper 한국어 인식 품질        · pyannote 화자 분리 정확도")
         print("    · BGE-M3 의미 검색 품질           · 법제처 실제 응답 형태")
         print("    · 윈도우 경로·인코딩·.bat 동작")
-    print("═" * 70)
+    print(M["dline"] * 70)
     return 0 if not failed else 1
 
 

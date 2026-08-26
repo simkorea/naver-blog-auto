@@ -21,6 +21,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+if str(ROOT.parent) not in sys.path:
+    sys.path.insert(0, str(ROOT.parent))
+
+# 한국어 윈도우 콘솔(cp949)에서 기호 출력에 죽지 않도록 맨 먼저 준비한다
+from evidence.console import marks, setup as _console_setup
+
+_console_setup()
+M = marks()
 REQ = ROOT / "requirements-evidence.txt"
 
 # (표시 이름, import 이름, pip 이름, 없으면 무엇을 못 하는가)
@@ -270,29 +278,29 @@ def ensure_env() -> Path:
 # 점검 · 설치
 # ─────────────────────────────────────────────────────────
 def report() -> list:
-    print("\n" + "═" * 68)
+    print("\n" + M["dline"] * 68)
     print("  증거파인더 설치 점검")
-    print("═" * 68)
+    print(M["dline"] * 68)
     print(f"  파이썬 : {sys.version.split()[0]}  ({platform.system()} {platform.machine()})")
 
     gpu = detect_nvidia()
     st = torch_status()
     if st.get("cuda"):
-        print(f"  가속   : ✓ GPU 사용 — {st['gpu']}")
+        print(f"  가속   : {M['ok']} GPU 사용 - {st['gpu']}")
     elif gpu:
-        print(f"  가속   : ✗ 그래픽카드({gpu})가 있는데 GPU 빌드가 아닙니다")
+        print(f"  가속   : {M['no']} 그래픽카드({gpu})가 있는데 GPU 빌드가 아닙니다")
         print("           → python evidence/setup_check.py --install 로 고칠 수 있습니다")
     elif st["installed"]:
         print("  가속   : CPU 전용 (녹음 전사가 느립니다)")
     else:
-        print("  가속   : ✗ torch 미설치 — 녹음 전사 불가")
+        print(f"  가속   : {M['no']} torch 미설치 - 녹음 전사 불가")
 
-    print("─" * 68)
+    print(M["line"] * 68)
     missing = []
     for label, module, pkg, purpose in PACKAGES:
         ok, why = _installed(module)
-        mark = "✓" if ok else "✗"
-        note = "" if ok else f"→ {purpose} 불가"
+        mark = M["ok"] if ok else M["no"]
+        note = "" if ok else f"-> {purpose} 불가"
         print(f"  {mark} {label:11s} {why if not ok else '설치됨':16s} {note}")
         if not ok:
             missing.append((label, pkg, purpose))
@@ -303,22 +311,22 @@ def report() -> list:
         ff = imageio_ffmpeg.get_ffmpeg_exe()
     except BaseException:
         pass
-    print(f"  {'✓' if ff else '✗'} {'오디오 처리':11s} {'준비됨' if ff else '미설치':16s}")
+    print(f"  {M['ok'] if ff else M['no']} {'오디오 처리':11s} {'준비됨' if ff else '미설치':16s}")
 
-    print("─" * 68)
+    print(M["line"] * 68)
     if missing:
         print(f"  빠진 것 {len(missing)}개 — 아래 명령으로 설치하세요:")
         print("      python evidence/setup_check.py --install")
     else:
-        print("  ✓ 필요한 것이 모두 설치되어 있습니다")
-    print("═" * 68 + "\n")
+        print(f"  {M['ok']} 필요한 것이 모두 설치되어 있습니다")
+    print(M["dline"] * 68 + "\n")
     return missing
 
 
 def install_all() -> None:
-    print("\n" + "═" * 68)
+    print("\n" + M["dline"] * 68)
     print("  증거파인더 설치")
-    print("═" * 68)
+    print(M["dline"] * 68)
 
     print("\n  [1/3] torch (음성 인식·의미 검색의 토대)")
     install_torch()
@@ -333,7 +341,7 @@ def install_all() -> None:
     print("\n  [3/3] 설정 파일")
     ensure_env()
 
-    print("\n" + "─" * 68)
+    print("\n" + M["line"] * 68)
     missing = report()
     if not missing:
         print("  다음 단계")
@@ -344,14 +352,58 @@ def install_all() -> None:
         print()
 
 
+def _ask_models() -> None:
+    """
+    모델을 미리 받을지 물어본다.
+
+    한글 안내를 배치 파일이 아니라 여기서 출력하는 이유:
+    배치 파일에 한글을 넣으면 chcp 전환 시점 때문에 글자가 깨지거나
+    cmd가 파일 안에서 위치를 잃는 문제가 있다. 파이썬이 출력하면 안전하다.
+    """
+    print()
+    print(M["dline"] * 68)
+    print("  AI 모델을 미리 받아둘까요?")
+    print(M["dline"] * 68)
+    print()
+    print("  약 4GB를 내려받습니다. 시간이 걸리지만 한 번 받아두면")
+    print("  이후에는 인터넷 없이도 동작하고, 급할 때 기다리지 않아도 됩니다.")
+    print()
+    try:
+        ans = input("  지금 받을까요? (Y/N): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        ans = "n"
+
+    if ans in ("y", "ㅛ", "예", "네"):
+        ensure_env()
+        download_models()
+        print()
+        print("  모델 준비가 끝났습니다. 이제 인터넷 없이도 동작합니다.")
+    else:
+        print()
+        print("  건너뛰었습니다. 나중에 받으려면:")
+        print("      python evidence/setup_check.py --models")
+
+    print()
+    print(M["dline"] * 68)
+    print("  설치가 끝났습니다.")
+    print()
+    print('  실행하려면 evidence 폴더의 "실행.bat" 을 더블클릭하세요.')
+    print(M["dline"] * 68)
+    print()
+
+
 def main():
     ap = argparse.ArgumentParser(description="증거파인더 설치 도우미")
     ap.add_argument("--install", action="store_true", help="부족한 것 설치")
     ap.add_argument("--models", action="store_true", help="AI 모델 미리 받기")
     ap.add_argument("--env", action="store_true", help=".env 파일만 만들기")
+    ap.add_argument("--ask-models", action="store_true",
+                    help="모델을 미리 받을지 물어본 뒤 받기")
     args = ap.parse_args()
 
-    if args.install:
+    if args.ask_models:
+        _ask_models()
+    elif args.install:
         install_all()
     elif args.models:
         ensure_env()

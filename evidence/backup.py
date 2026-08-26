@@ -272,6 +272,11 @@ def prune(keep: int = 10, out_dir=None) -> int:
 
 def _main():
     import argparse
+
+    from .console import marks, setup as console_setup
+    console_setup()
+    m = marks()
+
     ap = argparse.ArgumentParser(description="증거파인더 백업·복원")
     ap.add_argument("--create", action="store_true", help="지금 백업")
     ap.add_argument("--list", action="store_true", help="백업 목록")
@@ -293,7 +298,7 @@ def _main():
         if not rows:
             print("백업이 없습니다.")
             return
-        print(f"백업 {len(rows)}개\n" + "─" * 62)
+        print(f"백업 {len(rows)}개\n" + m["line"] * 62)
         for r in rows:
             s = r.get("stats") or {}
             print(f"  {Path(r['path']).name}")

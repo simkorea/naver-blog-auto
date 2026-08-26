@@ -16,6 +16,10 @@ import sys
 import shutil
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -247,10 +251,13 @@ def diagnose() -> list[tuple[str, bool, str]]:
 
 
 if __name__ == "__main__":
-    print("증거파인더 환경 점검\n" + "─" * 60)
+    from evidence.console import marks, setup as _console_setup
+    _console_setup()
+    _m = marks()
+    print("증거파인더 환경 점검\n" + _m["line"] * 60)
     for label, ok, msg in diagnose():
-        print(f"  {'✓' if ok else '✗'}  {label:12s} {msg}")
-    print("─" * 60)
+        print(f"  {_m['ok'] if ok else _m['no']}  {label:12s} {msg}")
+    print(_m["line"] * 60)
     print(f"  DB      : {DB_PATH}")
     print(f"  작업폴더 : {WORK_DIR}")
     sys.exit(0)

@@ -224,6 +224,11 @@ def format_hash_manifest(rows: list[dict]) -> str:
 # ─────────────────────────────────────────────────────────
 def _main():
     import argparse
+
+    from .console import marks, setup as console_setup
+    console_setup()
+    m = marks()
+
     ap = argparse.ArgumentParser(description="증거 원본 무결성 검사")
     ap.add_argument("--verify", action="store_true", help="등록된 원본 전수 대조")
     args = ap.parse_args()
@@ -247,10 +252,10 @@ def _main():
     ok = [r for r in rows if r["status"] == "ok"]
     bad = [r for r in rows if r["status"] != "ok"]
 
-    print("─" * 60)
+    print(m["line"] * 60)
     print(f"  정상 {len(ok)}건 / 전체 {len(rows)}건")
     if bad:
-        print(f"\n  ⚠ 문제 {len(bad)}건 — 확인이 필요합니다\n")
+        print(f"\n  [!] 문제 {len(bad)}건 - 확인이 필요합니다\n")
         for r in bad:
             print(f"    [{r['status']}] {r['path']}")
             if r["status"] == "CHANGED":
@@ -259,8 +264,8 @@ def _main():
         print("\n  원본이 변경되었거나 사라졌습니다.")
         print("  변경된 파일은 증거로서의 신뢰를 잃을 수 있으니 백업본을 확인하세요.")
     else:
-        print("\n  ✓ 모든 원본이 등록 당시와 동일합니다.")
-    print("─" * 60)
+        print(f"\n  {m['ok']} 모든 원본이 등록 당시와 동일합니다.")
+    print(m["line"] * 60)
 
 
 if __name__ == "__main__":
