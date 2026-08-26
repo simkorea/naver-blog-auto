@@ -30,9 +30,11 @@ python evidence/setup_check.py --go     남은 준비 (모델 받기 + 자체 �
 python tests/run_all.py                 회귀 159항목
 ```
 
-마지막으로 확인된 것: 음성 인식·의미 검색·OCR 모델 완료, 화자 분리 모델은
-`Weights only load failed` 로 두 번 실패한 뒤 `bf0b413` 에서 고쳤으나
-**사용자 PC에서 아직 확인되지 않았다.** 이것이 첫 번째 할 일이다.
+마지막으로 확인된 것: 사용자 PC에서 `--go` 로 전 모델(음성 인식·의미 검색·OCR·
+화자 분리) 받기 완료, `--selftest` 9/9 통과, `tests/run_all.py` 159/159 통과.
+화자 분리는 `Weights only load failed` 를 고친 뒤에도 실제 GPU·실제 오디오
+파일에서만 나오는 문제가 두 개 더 있었다 (윈도우 경로 구분자 버그, m4a 디코딩
+문제 — 위 지뢰 표 참고). 둘 다 고쳤다.
 
 ## 절대 하지 말 것
 
@@ -60,6 +62,8 @@ python tests/run_all.py                 회귀 159항목
 | GPU 인식되는데 느림 | 다른 패키지가 torch 를 CPU 빌드로 덮어씀 | 설치 끝에 `torch.cuda.is_available()` 확인, `--repair` |
 | `use_auth_token` 오류 | pyannote 3.x ↔ huggingface_hub 1.x | `diarize._ensure_hf_compat()` |
 | `Weights only load failed` | torch 2.6 기본값 변경 + lightning 이 `weights_only` 를 **명시적으로** 넘김 | `diarize._allow_full_checkpoint_load()` — 명시값도 덮어씀 |
+| 화자 분리가 `Lazy import of LazyModule(...k2_fsa...) failed` 로 죽음 | speechbrain 1.1.0 이 "호출자가 inspect.py 인가"를 `endswith("/inspect.py")` 로 검사 — 윈도우 경로는 `\` 라서 항상 거짓, 가드가 작동 안 함 | `diarize._ensure_speechbrain_windows_compat()` — 같은 검사를 `os.path.basename` 으로 다시 감쌈 |
+| 화자 분리가 `LibsndfileError: Format not recognised` (m4a) 로 죽음 | pyannote 는 soundfile(libsndfile)로 읽어 m4a 를 못 엶. Whisper 는 ffmpeg 로 직접 디코딩해서 같은 파일도 성공함 — 로더가 다름 | `diarize.diarize()` 가 전사용 WAV 사본(`preprocess.prepare`)을 재사용하도록 수정 |
 | 새 ZIP 받으면 인증키·DB 사라짐 | 윈도우가 `... (2)`, `(3)` 새 폴더에 품 | 자료를 `~/EvidenceFinder` 로 분리 (`config._data_path`) |
 
 ## 검증 규칙
@@ -81,8 +85,8 @@ python tests/run_all.py     # 커밋 전 항상. 159항목, 1초.
 
 ## 다음에 할 일
 
-1. `--go` 로 화자 분리 모델 받기 성공 확인
-2. 자체 점검 통과 확인 (`--selftest`, 3분)
+1. ~~`--go` 로 화자 분리 모델 받기 성공 확인~~ 완료
+2. ~~자체 점검 통과 확인 (`--selftest`, 3분)~~ 완료 (9/9)
 3. 녹음 1~2개 + 카톡 1개만 넣어 시범 운영 — **고유명사 사전부터 채운다**
    (사람 이름·상호·단지명. 인식률에 가장 크게 영향)
 4. 전사 품질 눈으로 확인 → 사전 보강 → 재실행
