@@ -20,30 +20,78 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:      # python-dotenv 미설치 시에도 동작
-    pass
-
 # ─────────────────────────────────────────────────────────
 # 경로
 # ─────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent          # .../evidence
 PROJECT_DIR = BASE_DIR.parent                       # 레포 루트
 
-DB_PATH = Path(os.getenv("EVIDENCE_DB", PROJECT_DIR / "evidence.db"))
-WORK_DIR = Path(os.getenv("EVIDENCE_WORK", PROJECT_DIR / "evidence_work"))
-LAW_CACHE_DIR = Path(os.getenv("LAW_CACHE", PROJECT_DIR / "law_cache"))
+# 프로그램 폴더 **밖**에 두는 사용자 자료 폴더.
+#
+# 왜 밖에 두는가
+#   프로그램은 새 버전을 받을 때마다 폴더가 통째로 바뀐다.
+#   게다가 윈도우는 같은 이름의 ZIP 을 받으면 덮어쓰지 않고
+#   `... (2)`, `... (3)` 처럼 **새 폴더**에 풀어버린다.
+#   자료를 프로그램 폴더 안에 두면 그때마다 증거 DB·인증키·사건 사전이
+#   옛 폴더에 남는다. 소송 자료로 그런 일이 나면 안 된다.
+#
+#   그래서 자료는 홈 폴더에 두고 프로그램만 갈아끼운다.
+#   폴더 이름을 영문으로 둔 것은 외부 프로그램(ffmpeg 등)에
+#   경로를 넘길 때 한글이 문제를 일으키는 환경이 아직 있어서다.
+USER_DIR = Path(os.getenv("EVIDENCE_HOME") or (Path.home() / "EvidenceFinder"))
+try:
+    USER_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # 홈 폴더를 못 쓰는 환경이면 예전 자리로 돌아간다
+    USER_DIR = PROJECT_DIR
+
+
+def _data_path(name: str, legacy_dir: Path, env: str = "") -> Path:
+    """
+    자료 파일의 자리를 정한다.
+
+    1) 환경변수로 지정했으면 그것
+    2) 예전 자리에 **이미 있으면 그대로 쓴다** — 쓰던 자료를 말없이 옮기지 않는다
+    3) 아니면 사용자 자료 폴더
+
+    2번이 핵심이다. 이미 증거를 등록해 둔 분이 새 버전을 받았다고
+    빈 DB 를 보게 되면 안 된다.
+    """
+    if env:
+        raw = os.getenv(env)
+        if raw:
+            return Path(raw)
+    legacy = legacy_dir / name
+    if legacy.exists():
+        return legacy
+    return USER_DIR / name
+
+
+DB_PATH = _data_path("evidence.db", PROJECT_DIR, "EVIDENCE_DB")
+WORK_DIR = _data_path("evidence_work", PROJECT_DIR, "EVIDENCE_WORK")
+LAW_CACHE_DIR = _data_path("law_cache", PROJECT_DIR, "LAW_CACHE")
 INGEST_LOG = WORK_DIR / "ingest_log.jsonl"
 
 # 사용자 편집 설정 파일 (개인정보 포함 → .gitignore 대상)
-CASE_TERMS_YAML = BASE_DIR / "case_terms.yaml"
-KEYWORDS_YAML = BASE_DIR / "keywords.yaml"
-LAW_SCOPE_YAML = BASE_DIR / "law_scope.yaml"
+CASE_TERMS_YAML = _data_path("case_terms.yaml", BASE_DIR)
+KEYWORDS_YAML = _data_path("keywords.yaml", BASE_DIR)
+LAW_SCOPE_YAML = _data_path("law_scope.yaml", BASE_DIR)
+
+# 인증키 파일. 프로그램 폴더의 것이 있으면 그것을 먼저 읽고(예전 방식 존중),
+# 홈 폴더의 것으로 빈 항목을 채운다. dotenv 는 이미 정해진 값을 덮지 않는다.
+ENV_FILE = USER_DIR / ".env"
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_DIR / ".env")
+    load_dotenv(ENV_FILE)
+except ImportError:      # python-dotenv 미설치 시에도 동작
+    pass
 
 for _d in (WORK_DIR, LAW_CACHE_DIR):
-    _d.mkdir(parents=True, exist_ok=True)
+    try:
+        _d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
 
 
 # ─────────────────────────────────────────────────────────

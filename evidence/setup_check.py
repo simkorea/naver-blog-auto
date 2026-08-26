@@ -586,8 +586,19 @@ GEMINI_API_KEY=
 """
 
 
-def ensure_env() -> Path:
-    env = ROOT.parent / ".env"
+def ensure_env(quiet: bool = False) -> Path:
+    """
+    인증키 파일을 준비한다.
+
+    프로그램 폴더가 아니라 홈 폴더에 만든다. 새 버전을 받을 때마다
+    인증키를 다시 넣게 만들지 않기 위해서다 (config.ENV_FILE 주석 참고).
+    예전 방식으로 프로그램 폴더에 이미 있으면 그것을 그대로 쓴다.
+    """
+    from evidence import config
+
+    legacy = ROOT.parent / ".env"
+    env = legacy if legacy.exists() else config.ENV_FILE
+    env.parent.mkdir(parents=True, exist_ok=True)
     if env.exists():
         text = env.read_text(encoding="utf-8", errors="ignore")
         added = []
@@ -600,13 +611,16 @@ def ensure_env() -> Path:
                 for key in added:
                     default = "true" if key in ("OFFLINE_ONLY", "ALLOW_LAW_API") else ""
                     f.write(f"{key}={default}\n")
-            print(f"    기존 .env에 {', '.join(added)} 항목을 추가했습니다")
-        else:
+            if not quiet:
+                print(f"    기존 .env에 {', '.join(added)} 항목을 추가했습니다")
+        elif not quiet:
             print("    .env 파일이 이미 있습니다")
     else:
         env.write_text(ENV_TEMPLATE, encoding="utf-8")
-        print(f"    .env 파일을 만들었습니다: {env}")
-        print("    메모장으로 열어 인증키를 넣으세요 (없어도 대부분 기능은 동작합니다)")
+        if not quiet:
+            print(f"    인증키 파일을 만들었습니다: {env}")
+            print("    이 파일은 프로그램 새 버전을 받아도 그대로 남습니다.")
+            print("    인증키를 넣으려면: python evidence/setup_check.py --token")
     return env
 
 
@@ -618,6 +632,13 @@ def report() -> list:
     print("  증거파인더 설치 점검")
     print(M["dline"] * 68)
     print(f"  파이썬 : {sys.version.split()[0]}  ({platform.system()} {platform.machine()})")
+    try:
+        from evidence import config as _cfg
+        print(f"  자료   : {_cfg.DB_PATH.parent}")
+        print("           (증거 DB·인증키·사건 사전이 여기 있습니다. "
+              "프로그램을 새로 받아도 그대로 남습니다)")
+    except BaseException:
+        pass
 
     gpu = detect_nvidia()
     st = torch_status()
@@ -845,7 +866,7 @@ def _write_env_value(key: str, value: str) -> None:
     .env 의 해당 줄만 갈아끼운다.
     다른 설정은 건드리지 않는다 — 사용자가 손으로 넣어둔 값이 있을 수 있다.
     """
-    env = ensure_env()
+    env = ensure_env(quiet=True)
     lines = env.read_text(encoding="utf-8", errors="ignore").splitlines()
     done = False
     for i, line in enumerate(lines):
@@ -907,9 +928,11 @@ def setup_tokens() -> None:
 
     print()
     print(M["line"] * 68)
-    print("  다음 단계")
-    print("      python evidence/setup_check.py --models     (AI 모델 받기)")
-    print("      python evidence/setup_check.py --selftest   (전 과정 점검)")
+    print(f"  저장 위치: {ensure_env(quiet=True)}")
+    print("  프로그램 새 버전을 받아도 이 파일은 그대로 남습니다.")
+    print()
+    print("  다음 단계 - 이 한 줄이면 남은 준비가 끝납니다")
+    print("      python evidence/setup_check.py --go")
     print(M["dline"] * 68 + "\n")
 
 
