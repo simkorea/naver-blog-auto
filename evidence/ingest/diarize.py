@@ -15,6 +15,8 @@
 pyannote 모델은 HuggingFace 토큰이 필요하다(무료).
 토큰이 없거나 모델 접근 동의를 안 했으면 이 단계만 건너뛴다.
 """
+import contextlib
+
 from .. import config
 
 _pipeline = None
@@ -90,6 +92,42 @@ def _ensure_hf_compat() -> None:
                 setattr(mod, name, getattr(hub, name))
 
 
+@contextlib.contextmanager
+def _allow_full_checkpoint_load():
+    """
+    pyannote 체크포인트를 불러오는 **그 순간에만** torch.load 방식을 되돌린다.
+
+    torch 2.6 부터 torch.load 가 weights_only=True 로 바뀌었다.
+    모르는 파일에서 임의 코드가 실행되는 것을 막는 안전 조치다.
+    그런데 pyannote 체크포인트에는 가중치뿐 아니라 설정 객체가 함께 들어 있어
+    그 방식으로는 읽지 못하고 이렇게 죽는다:
+
+        Weights only load failed.
+
+    안전 조치를 통째로 끄지 않고 이 한 번의 호출로 범위를 좁혔다.
+    불러오는 파일은 사용자가 직접 약관에 동의하고 공식 저장소에서 받은
+    pyannote 모델이라 출처가 분명하다.
+    """
+    import torch
+
+    original = torch.load
+
+    def patched(*args, **kwargs):
+        if "weights_only" in kwargs:
+            return original(*args, **kwargs)     # 부르는 쪽이 정했으면 존중
+        try:
+            return original(*args, weights_only=False, **kwargs)
+        except TypeError:
+            # 이 인자를 모르는 옛 torch. 그냥 원래대로 부른다.
+            return original(*args, **kwargs)
+
+    torch.load = patched
+    try:
+        yield
+    finally:
+        torch.load = original      # 반드시 되돌린다
+
+
 def get_pipeline():
     global _pipeline
     if _pipeline is not None:
@@ -102,9 +140,11 @@ def get_pipeline():
     _ensure_hf_compat()
 
     from pyannote.audio import Pipeline
-    _pipeline = Pipeline.from_pretrained(
-        config.DIARIZE_MODEL, use_auth_token=config.HF_TOKEN
-    )
+
+    with _allow_full_checkpoint_load():
+        _pipeline = Pipeline.from_pretrained(
+            config.DIARIZE_MODEL, use_auth_token=config.HF_TOKEN
+        )
     hw = config.hardware()
     if hw["device"] == "cuda":
         try:

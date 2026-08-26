@@ -464,6 +464,12 @@ def diarize_failure_hint(err: BaseException) -> list[str]:
     """
     text = f"{type(err).__name__} {err}".lower()
 
+    if "weights only" in text or "weights_only" in text:
+        return [
+            "torch 의 안전 기본값과 pyannote 체크포인트 형식이 어긋났습니다.",
+            "이 프로그램의 최신본에 고쳐져 있습니다 - 최신 파일을 내려받아",
+            "다시 실행해 주세요 (약관 문제가 아닙니다).",
+        ]
     if "unexpected keyword argument" in text or isinstance(err, TypeError):
         return [
             "라이브러리 버전이 서로 맞지 않습니다 (약관 문제가 아닙니다).",

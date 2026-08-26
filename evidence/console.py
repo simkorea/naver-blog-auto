@@ -49,6 +49,11 @@ _HARMLESS = [
     # 모델 파일 형식 관련 안내
     ("TypedStorage is deprecated", None),
     ("torch.load", "weights_only"),
+    # 윈도우에서 개발자 모드가 꺼져 있으면 huggingface_hub 이 캐시에 심볼릭 링크
+    # 대신 파일을 복사한다는 안내를 길게 출력한다. 디스크를 조금 더 쓸 뿐,
+    # 모델은 정상적으로 받아지고 정상적으로 읽힌다.
+    ("cache-system uses symlinks", None),
+    ("does not support symlinks", None),
 ]
 
 
