@@ -8,9 +8,21 @@
 # crashes pip with UnicodeDecodeError before a single package is installed.
 # Keep every character in this file ASCII.
 #
-# GPU users: install torch first so you get the CUDA build.
-#   python -m pip install torch --index-url https://download.pytorch.org/whl/cu124
-# Or just run:  python evidence/setup_check.py --install
+# IMPORTANT - the torch family is NOT listed in this file on purpose.
+#
+# torch, torchvision, torchaudio and torchcodec have interlocking versions and
+# must all come from the SAME index. Installing them from PyPI gives you a CPU
+# build on Windows, and mixing sources produces a DLL mismatch that shows up as
+# "The code execution cannot proceed" when Python starts.
+#
+# Let the setup helper handle them - it picks the CUDA build that matches your
+# card (RTX 50 series needs cu128, older cards cu126):
+#
+#     python evidence/setup_check.py --install
+#
+# If something already went wrong:
+#
+#     python evidence/setup_check.py --repair
 
 # UI
 streamlit>=1.40

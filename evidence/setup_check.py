@@ -60,13 +60,25 @@ CUDA_INDEX_BLACKWELL = "https://download.pytorch.org/whl/cu128"
 _BLACKWELL = ("rtx 50", "rtx50", "5050", "5060", "5070", "5080", "5090",
               "rtx pro", "b200", "gb200")
 
-# torch 와 버전이 묶여 있어 함께 다뤄야 하는 것들.
-# 이걸 따로 두면 나중에 다른 패키지가 CPU 빌드를 다시 끌어온다.
-TORCH_PKGS = ("torch", "torchaudio")
+# torch 계열은 버전이 서로 묶여 있다. 하나만 따로 깔거나 지우면
+# DLL 이 어긋나 "코드 실행을 계속할 수 없습니다" 시스템 오류 창이 뜬다.
+# 반드시 **같은 CUDA 저장소에서 함께** 다뤄야 한다.
+#
+# 각각이 왜 필요한가:
+#   torch        모든 것의 토대
+#   torchvision  easyocr 가 요구 -> 이미지·스캔 PDF 글자 읽기
+#   torchaudio   pyannote 가 요구 -> 화자 분리
+#   torchcodec   pyannote 4.x 가 요구 -> 화자 분리
+#
+# 예전에 DLL 오류를 없애려고 torchcodec 을 지웠는데, 원인은 torchcodec
+# 자체가 아니라 torch 와의 버전 불일치였다. 지우면 화자 분리가 통째로
+# 죽는다. 맞춰야지 걷어낼 것이 아니었다.
+TORCH_CORE = ("torch", "torchvision", "torchaudio")
 
-# 우리 프로그램이 쓰지 않는데 DLL 충돌만 일으키는 것.
-# torchaudio 가 딸려 들여오지만, 없어도 전사·화자분리 모두 동작한다.
-TROUBLE_PKGS = ("torchcodec",)
+# 없어도 나머지는 동작한다. 설치에 실패하면 그 기능만 못 쓴다고 알린다.
+TORCH_OPTIONAL = ("torchcodec",)
+
+TORCH_PKGS = TORCH_CORE + TORCH_OPTIONAL
 
 
 def cuda_index_for(gpu_name: str | None) -> str:
@@ -149,7 +161,7 @@ def install_torch(force: bool = False) -> bool:
     gpu = detect_nvidia()
     st = torch_status()
 
-    if st["installed"] and st.get("cuda") and not force:
+    if st["installed"] and st.get("cuda") and not force and not _family_broken():
         print(f"    이미 GPU 가속으로 설치되어 있습니다 - {st['gpu']}")
         return True
 
@@ -159,7 +171,9 @@ def install_torch(force: bool = False) -> bool:
             return True
         print("    그래픽카드가 없어 CPU 빌드를 설치합니다")
         print("    (녹음 전사가 느립니다. 1시간 녹음에 20~40분)")
-        return _pip(*TORCH_PKGS) == 0
+        ok = _pip(*TORCH_CORE) == 0
+        _pip(*TORCH_OPTIONAL, quiet=True)
+        return ok
 
     index = cuda_index_for(gpu)
     tag = index.rsplit("/", 1)[-1]
@@ -170,34 +184,110 @@ def install_torch(force: bool = False) -> bool:
     else:
         print(f"    그래픽카드 감지: {gpu}")
 
-    # 섞인 버전이 남아 있으면 DLL 이 어긋난다. 먼저 걷어낸다.
-    _pip("uninstall", "-y", *TORCH_PKGS, *TROUBLE_PKGS)
+    # 섞인 버전이 남아 있으면 DLL 이 어긋난다. 계열 전체를 먼저 걷어낸다.
+    _pip("uninstall", "-y", *TORCH_PKGS)
 
     print(f"    {tag} 빌드를 설치합니다 (2GB 내외, 몇 분 걸립니다)")
-    rc = _pip(*TORCH_PKGS, "--index-url", index)
+    rc = _pip(*TORCH_CORE, "--index-url", index)
     if rc != 0 and index != CUDA_INDEX_DEFAULT:
         print(f"    {tag} 설치 실패 -> 기본 CUDA 빌드로 시도합니다")
-        rc = _pip(*TORCH_PKGS, "--index-url", CUDA_INDEX_DEFAULT)
+        index = CUDA_INDEX_DEFAULT
+        rc = _pip(*TORCH_CORE, "--index-url", index)
     if rc != 0:
         print("    CUDA 빌드 실패 -> CPU 빌드로 시도합니다")
-        rc = _pip(*TORCH_PKGS)
-    return rc == 0
+        index = None
+        rc = _pip(*TORCH_CORE)
+
+    if rc != 0:
+        return False
+
+    # 선택 부품은 실패해도 전체를 멈추지 않는다.
+    # 반드시 핵심과 **같은 저장소**에서 받아야 버전이 맞는다.
+    args = list(TORCH_OPTIONAL)
+    if index:
+        args += ["--index-url", index]
+    if _pip(*args) != 0:
+        print(f"    {M['no']} torchcodec 을 설치하지 못했습니다.")
+        print("       화자 분리(누가 말했는지 구분)만 못 쓰고 나머지는 동작합니다.")
+        print("       화자 분리가 꼭 필요하면 이전 버전을 쓰세요:")
+        print('           python -m pip install "pyannote.audio<4"')
+    return True
 
 
-def remove_trouble_packages() -> None:
+def torch_family_status() -> dict:
     """
-    DLL 충돌을 일으키는데 우리는 쓰지 않는 패키지를 걷어낸다.
+    torch 계열이 서로 맞는지 본다.
 
-    torchcodec 은 torchaudio 를 깔 때 딸려오는데, torch 버전과 조금만
-    어긋나도 파이썬을 켜는 순간 "코드 실행을 계속할 수 없습니다" 라는
-    시스템 오류 창이 뜬다. 우리 프로그램은 이걸 쓰지 않는다.
+    torch 는 cu128 인데 torchvision 이 없거나 CPU 빌드면, 설치는 되어 있는데
+    쓸 때 터진다. 그 상태를 사용자가 화면에서 바로 알 수 있어야 한다.
     """
-    for pkg in TROUBLE_PKGS:
+    import importlib.metadata as md
+
+    found, missing, tags = {}, [], set()
+    for pkg in TORCH_PKGS:
         module = pkg.replace("-", "_")
-        ok, _ = _installed(module)
-        if ok:
-            print(f"    {pkg} 제거 (DLL 충돌 방지, 이 프로그램은 쓰지 않습니다)")
-            _pip("uninstall", "-y", pkg, quiet=True)
+        try:
+            __import__(module)
+            version = md.version(pkg)
+            found[pkg] = version
+            # 빌드 표시가 없는 것도 하나의 값으로 센다.
+            # torch 는 +cu128 인데 torchvision 은 표시가 없다면, 그것이야말로
+            # 다른 곳(PyPI CPU 빌드)에서 온 것이라 어긋난 상태다.
+            # 표시가 있는 것만 모으면 이 경우를 놓친다.
+            tags.add(version.split("+", 1)[1] if "+" in version else "표시없음")
+        except BaseException:
+            missing.append(pkg)
+
+    core_missing = [p for p in missing if p in TORCH_CORE]
+    return {
+        "found": found,
+        "missing": missing,
+        "core_missing": core_missing,
+        "tags": sorted(tags),
+        "mismatched": len(tags) > 1 or bool(core_missing),
+    }
+
+
+def _family_broken() -> bool:
+    fam = torch_family_status()
+    return bool(fam["mismatched"]) if fam["found"] else False
+
+
+def check_runtime() -> list[tuple[str, bool, str]]:
+    """
+    설치되어 있다고 끝이 아니다. 실제로 불러봐야 안다.
+
+    DLL 이 어긋나 있으면 import 는 되는데 쓸 때 터지거나, 파이썬을 켜는
+    순간 시스템 오류 창이 뜬다. 설치 직후에 한 번씩 실제로 만들어 본다.
+    """
+    out = []
+
+    try:
+        from faster_whisper import WhisperModel      # noqa: F401
+        out.append(("녹음 전사", True, "준비됨"))
+    except BaseException as e:
+        out.append(("녹음 전사", False, f"{type(e).__name__}: {e}"))
+
+    try:
+        import easyocr                                # noqa: F401
+        import torchvision                            # noqa: F401
+        out.append(("이미지 글자 읽기", True, "준비됨"))
+    except BaseException as e:
+        out.append(("이미지 글자 읽기", False, f"{type(e).__name__}: {e}"))
+
+    try:
+        from pyannote.audio import Pipeline           # noqa: F401
+        out.append(("화자 분리", True, "준비됨 (HF_TOKEN 필요)"))
+    except BaseException as e:
+        out.append(("화자 분리", False, f"{type(e).__name__}: {e}"))
+
+    try:
+        from sentence_transformers import SentenceTransformer  # noqa: F401
+        out.append(("의미 검색", True, "준비됨"))
+    except BaseException as e:
+        out.append(("의미 검색", False, f"{type(e).__name__}: {e}"))
+
+    return out
 
 
 # ─────────────────────────────────────────────────────────
@@ -392,6 +482,14 @@ def report() -> list:
     else:
         print(f"  가속   : {M['no']} torch 미설치 - 녹음 전사 불가")
 
+    fam = torch_family_status()
+    if fam["found"] and (fam["missing"] or len(fam["tags"]) > 1):
+        if fam["missing"]:
+            print(f"  부품   : {M['no']} 빠짐 - {', '.join(fam['missing'])}")
+        if len(fam["tags"]) > 1:
+            print(f"           {M['no']} 버전이 섞임 - {', '.join(fam['tags'])}")
+        print("           -> python evidence/setup_check.py --repair 로 고칠 수 있습니다")
+
     print(M["line"] * 68)
     missing = []
     for label, module, pkg, purpose in PACKAGES:
@@ -453,14 +551,24 @@ def install_all() -> None:
     # 방금 깐 CUDA 빌드를 CPU 빌드로 덮어쓴다. 그러면 그래픽카드가 있는데도
     # 전사가 10배 느려지고, 사용자는 원인을 모른다.
     # 그래서 마지막에 다시 확인하고 필요하면 되돌린다.
-    print("\n  [3/4] GPU 가속 확인")
-    remove_trouble_packages()
+    print("\n  [3/4] GPU 가속·부품 정합성 확인")
     gpu = detect_nvidia()
     st = torch_status()
-    if gpu and not st.get("cuda"):
-        print("    다른 패키지가 torch 를 CPU 빌드로 덮어썼습니다. 되돌립니다.")
+    fam = torch_family_status()
+
+    need_repair = (gpu and not st.get("cuda")) or fam["core_missing"] or fam["mismatched"]
+    if need_repair:
+        if fam["core_missing"]:
+            print(f"    빠진 부품: {', '.join(fam['core_missing'])}")
+            print("    다른 패키지가 torch 계열을 흐트러뜨렸습니다. 맞춰서 다시 깝니다.")
+        elif gpu and not st.get("cuda"):
+            print("    다른 패키지가 torch 를 CPU 빌드로 덮어썼습니다. 되돌립니다.")
+        else:
+            print(f"    버전이 섞였습니다: {', '.join(fam['tags']) or '표시 없음'}")
         install_torch(force=True)
         st = torch_status()
+        fam = torch_family_status()
+
     if st.get("cuda"):
         print(f"    {M['ok']} GPU 가속 사용 - {st['gpu']}")
     elif gpu:
@@ -468,8 +576,25 @@ def install_all() -> None:
     else:
         print("    그래픽카드가 없어 CPU 로 동작합니다.")
 
+    if fam["missing"]:
+        print(f"    {M['no']} 아직 없는 부품: {', '.join(fam['missing'])}")
+
     print("\n  [4/4] 설정 파일")
     ensure_env()
+
+    print("\n" + M["line"] * 68)
+    print("  기능이 실제로 되는지 확인합니다")
+    print("  (설치되어 있어도 부품 버전이 어긋나면 쓸 때 터집니다)")
+    print()
+    broken = []
+    for label, ok, detail in check_runtime():
+        print(f"    {M['ok'] if ok else M['no']} {label:16s} {detail}")
+        if not ok:
+            broken.append(label)
+    if broken:
+        print()
+        print(f"    {M['no']} 못 쓰는 기능: {', '.join(broken)}")
+        print("       고치려면: python evidence/setup_check.py --repair")
 
     print("\n" + M["line"] * 68)
     missing = report()
@@ -494,19 +619,36 @@ def repair() -> None:
     print("  설치 고치기")
     print(M["dline"] * 68)
 
-    print("\n  [1/2] DLL 충돌 패키지 정리")
-    remove_trouble_packages()
+    fam = torch_family_status()
+    if fam["missing"]:
+        print(f"\n  빠진 부품: {', '.join(fam['missing'])}")
+    if len(fam["tags"]) > 1:
+        print(f"  섞인 버전: {', '.join(fam['tags'])}")
 
-    print("\n  [2/2] torch 를 그래픽카드에 맞게 다시 설치")
+    print("\n  [1/2] torch 계열을 그래픽카드에 맞게 통째로 다시 설치")
     install_torch(force=True)
+
+    print("\n  [2/2] 기능이 실제로 되는지 확인")
+    broken = []
+    for label, ok, detail in check_runtime():
+        print(f"    {M['ok'] if ok else M['no']} {label:16s} {detail}")
+        if not ok:
+            broken.append(label)
 
     print("\n" + M["line"] * 68)
     st = torch_status()
     if st.get("cuda"):
         print(f"  {M['ok']} GPU 가속 사용 - {st['gpu']}")
-    else:
+    elif detect_nvidia():
         print(f"  {M['no']} 아직 GPU 가속이 켜지지 않았습니다.")
         print("     화면에 뜬 메시지를 확인해 주세요.")
+    else:
+        print("  그래픽카드가 없어 CPU 로 동작합니다.")
+
+    if broken:
+        print(f"  {M['no']} 아직 못 쓰는 기능: {', '.join(broken)}")
+    else:
+        print(f"  {M['ok']} 모든 기능이 준비되었습니다.")
     print(M["dline"] * 68 + "\n")
 
 
