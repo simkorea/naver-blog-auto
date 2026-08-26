@@ -82,6 +82,18 @@ def _do_scan(conn, folder, counterparty):
             for p, err in result["failed"]:
                 st.text(f"{Path(p).name} — {err}")
 
+    skipped = result.get("skipped") or []
+    if skipped:
+        # 무엇이 빠졌는지 반드시 보여준다.
+        # 정작 필요한 증거가 조용히 누락되면 알 방법이 없다.
+        with st.expander(f"건너뛴 파일 {len(skipped)}개 — 확인해 보세요"):
+            st.caption(
+                "아래 파일들은 등록되지 않았습니다. 이 중 증거로 쓸 것이 있다면 "
+                "형식을 바꿔서(예: 한글 → PDF) 다시 넣으세요."
+            )
+            for item in skipped[:200]:
+                st.text(f"{Path(item['path']).name} — {item['reason']}")
+
 
 def _source_table(conn):
     rows = scanner.list_sources(conn)

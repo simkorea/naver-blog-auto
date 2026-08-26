@@ -50,6 +50,22 @@ def _to24(ampm: str, hour: int) -> int:
     return h + 12 if ampm == "오후" else h
 
 
+def _safe_dt(y, mo, d, ampm, h, mi) -> str | None:
+    """
+    날짜·시각을 만들되, 값이 이상하면 None을 돌려준다.
+
+    내보내기가 손상되거나 형식이 조금 다른 파일에서 말이 안 되는 값이
+    섞여 나온다. 그 한 줄 때문에 예외가 나면 대화 전체를 잃는다.
+    시각 하나 없는 것이 대화 전체를 잃는 것보다 낫다.
+    """
+    try:
+        dt = datetime(int(y), int(mo), int(d),
+                      _to24(ampm, int(h)), int(mi))
+    except (ValueError, TypeError):
+        return None
+    return dt.isoformat(timespec="minutes")
+
+
 def find_split_files(path) -> list[Path]:
     """
     분할 저장된 뒷부분 파일을 찾아 순서대로 돌려준다.
@@ -114,20 +130,26 @@ def parse(path) -> list[dict]:
 
             m = _PC_DATE.match(line)
             if m:
-                cur_date = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                try:
+                    datetime(y, mo, d)          # 실제로 있는 날짜인지 확인
+                    cur_date = (y, mo, d)
+                except ValueError:
+                    cur_date = None             # 이상한 날짜면 시각 없이 진행
                 last = None
                 continue
 
             m = _MO_MSG.match(line)
             if m:
-                dt = datetime(
-                    int(m.group("y")), int(m.group("mo")), int(m.group("d")),
-                    _to24(m.group("ampm"), int(m.group("h"))), int(m.group("mi")),
-                )
+                # 날짜가 이상해도(내보내기 오류, 손상 등) 메시지는 건진다.
+                # 시각 하나 때문에 대화 전체를 잃는 것이 훨씬 나쁘다.
+                occurred = _safe_dt(
+                    m.group("y"), m.group("mo"), m.group("d"),
+                    m.group("ampm"), m.group("h"), m.group("mi"))
                 last = {
                     "speaker": m.group("who").strip(),
                     "text": m.group("text"),
-                    "occurred_at": dt.isoformat(timespec="minutes"),
+                    "occurred_at": occurred,
                 }
                 messages.append(last)
                 continue
@@ -136,11 +158,9 @@ def parse(path) -> list[dict]:
             if m:
                 occurred = None
                 if cur_date:
-                    dt = datetime(
+                    occurred = _safe_dt(
                         cur_date[0], cur_date[1], cur_date[2],
-                        _to24(m.group("ampm"), int(m.group("h"))), int(m.group("m")),
-                    )
-                    occurred = dt.isoformat(timespec="minutes")
+                        m.group("ampm"), m.group("h"), m.group("m"))
                 last = {
                     "speaker": m.group("who").strip(),
                     "text": m.group("text"),

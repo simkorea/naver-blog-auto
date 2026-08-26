@@ -16,8 +16,10 @@
     다만 어떤 원본이 어디 있었는지 목록과 해시는 함께 저장한다.
 """
 import json
+import os
 import shutil
 import sqlite3
+import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -41,15 +43,36 @@ def _safe_copy_db(dst: Path) -> None:
         src.close()
 
 
+def _unique_path(out_dir: Path, stem: str, suffix: str) -> Path:
+    """
+    이미 있는 파일은 절대 덮어쓰지 않는다.
+
+    파일명이 초 단위 시각뿐이면 같은 초에 두 번 만들 때 겹친다.
+    백업을 덮어쓰는 것은 백업이 없는 것보다 나쁘다 — 있다고 믿고
+    원본 정리를 해버릴 수 있기 때문이다.
+    """
+    candidate = out_dir / f"{stem}{suffix}"
+    n = 2
+    while candidate.exists():
+        candidate = out_dir / f"{stem}_{n}{suffix}"
+        n += 1
+    return candidate
+
+
 def create(out_dir=None, note: str = "") -> Path:
     """백업 파일 하나(zip)를 만든다."""
     out_dir = Path(out_dir or (config.WORK_DIR / "backups"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    zip_path = out_dir / f"증거파인더_백업_{stamp}.zip"
+    zip_path = _unique_path(out_dir, f"증거파인더_백업_{stamp}", ".zip")
 
-    tmp_db = out_dir / f".tmp_{stamp}.db"
+    # 임시 DB도 고유하게. 두 백업이 동시에 돌면 서로의 임시 파일을 밟는다.
+    fd, tmp_name = tempfile.mkstemp(prefix=".tmp_backup_", suffix=".db",
+                                    dir=str(out_dir))
+    os.close(fd)
+    tmp_db = Path(tmp_name)
+    tmp_db.unlink()          # sqlite backup API가 새로 만들게 비워둔다
     manifest = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "note": note,
@@ -133,46 +156,91 @@ def restore(zip_path, keep_current: bool = True) -> dict:
     """
     백업에서 복원한다.
 
-    덮어쓰기 전에 지금 상태를 한 번 더 백업한다 —
-    잘못된 백업을 복원해 멀쩡한 자료를 날리는 사고를 막기 위해서다.
+    순서가 중요하다.
+      1. 복원할 내용을 **먼저 메모리로 읽는다**
+      2. 그 다음 현재 상태를 안전 백업한다
+      3. 마지막에 덮어쓴다
+
+    이 순서를 지키지 않으면, 안전 백업을 만드는 사이에 복원 대상 파일이
+    영향을 받을 수 있다. 실제로 그런 일이 있었다: 안전 백업 파일명이
+    복원 대상과 겹쳐 대상을 현재(빈) 상태로 덮어썼고, 그 덮어써진 파일을
+    읽어 복원해 자료가 통째로 사라졌다. 안전장치가 자료를 파괴한 것이다.
     """
-    zip_path = Path(zip_path)
+    zip_path = Path(zip_path).resolve()
     if not zip_path.exists():
         raise FileNotFoundError(f"백업 파일을 찾을 수 없습니다: {zip_path}")
 
     info = inspect(zip_path)
-    safety = None
-    if keep_current and config.DB_PATH.exists():
-        safety = create(note="복원 직전 자동 백업")
 
+    # ── 1. 복원할 내용을 먼저 다 읽어둔다 ──────────────
+    payload = {}
     with zipfile.ZipFile(zip_path) as z:
         names = z.namelist()
         if "evidence.db" not in names:
             raise ValueError("백업에 분석 결과(evidence.db)가 없습니다")
-
-        # WAL 파일이 남아 있으면 복원한 DB와 섞인다
-        for suffix in ("-wal", "-shm", "-journal"):
-            side = Path(str(config.DB_PATH) + suffix)
-            if side.exists():
-                side.unlink()
-
-        with z.open("evidence.db") as src, config.DB_PATH.open("wb") as dst:
-            shutil.copyfileobj(src, dst)
-
-        if "ingest_log.jsonl" in names:
-            config.INGEST_LOG.parent.mkdir(parents=True, exist_ok=True)
-            with z.open("ingest_log.jsonl") as src, config.INGEST_LOG.open("wb") as dst:
-                shutil.copyfileobj(src, dst)
-
         for name in names:
-            if name.startswith("config/"):
-                target = config.BASE_DIR / Path(name).name
-                with z.open(name) as src, target.open("wb") as dst:
-                    shutil.copyfileobj(src, dst)
+            if name == "evidence.db" or name == "ingest_log.jsonl" \
+                    or name.startswith("config/"):
+                payload[name] = z.read(name)
+
+    if not payload.get("evidence.db"):
+        raise ValueError("백업 안의 분석 결과가 비어 있습니다")
+
+    # ── 2. 현재 상태를 안전 백업 ──────────────────────
+    safety = None
+    if keep_current and config.DB_PATH.exists():
+        # 복원하려는 백업과 같은 폴더에 둔다 — 사용자가 찾기 쉽도록.
+        # create()가 고유 이름을 보장하므로 대상을 덮어쓰지 않는다.
+        safety = create(zip_path.parent, note="복원 직전 자동 백업")
+        if Path(safety).resolve() == zip_path:
+            # 여기 오면 안 되지만, 안전장치는 두 겹이어야 한다.
+            raise RuntimeError(
+                "안전 백업이 복원 대상 파일을 덮어쓰려 했습니다. 복원을 중단합니다.")
+
+    # ── 3. 덮어쓴다 ─────────────────────────────────
+    # WAL 파일이 남아 있으면 복원한 DB와 섞여 엉뚱한 상태가 된다
+    for suffix in ("-wal", "-shm", "-journal"):
+        side = Path(str(config.DB_PATH) + suffix)
+        if side.exists():
+            side.unlink()
+
+    config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.DB_PATH.write_bytes(payload["evidence.db"])
+
+    if payload.get("ingest_log.jsonl"):
+        config.INGEST_LOG.parent.mkdir(parents=True, exist_ok=True)
+        config.INGEST_LOG.write_bytes(payload["ingest_log.jsonl"])
+
+    for name, data in payload.items():
+        if name.startswith("config/"):
+            (config.BASE_DIR / Path(name).name).write_bytes(data)
+
+    # ── 4. 정말 복원되었는지 확인한다 ──────────────────
+    verified = {}
+    try:
+        conn = sqlite3.connect(config.DB_PATH)
+        conn.row_factory = sqlite3.Row
+        try:
+            from . import db as _db
+            verified = _db.stats(conn)
+        finally:
+            conn.close()
+    except Exception as e:
+        raise RuntimeError(f"복원한 파일을 열 수 없습니다: {e}") from e
+
+    expected = (info.get("stats") or {}).get("segments")
+    if expected is not None and verified.get("segments", 0) != expected:
+        raise RuntimeError(
+            f"복원 결과가 백업 내용과 다릅니다 "
+            f"(기대 {expected}구간 / 실제 {verified.get('segments', 0)}구간). "
+            f"백업 파일이 손상되었을 수 있습니다."
+            + (f" 복원 직전 상태는 여기 있습니다: {safety}" if safety else "")
+        )
 
     integrity.log("backup_restored", path=str(zip_path),
-                  safety_backup=str(safety) if safety else None)
-    return {"restored": info, "safety_backup": safety}
+                  safety_backup=str(safety) if safety else None,
+                  segments=verified.get("segments", 0))
+    return {"restored": info, "safety_backup": safety, "verified": verified}
 
 
 def list_backups(out_dir=None) -> list[dict]:

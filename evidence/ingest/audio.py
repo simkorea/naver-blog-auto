@@ -191,7 +191,10 @@ def transcribe(path, model_name: str = None, progress=None,
 
     total = getattr(info, "duration", None) or 0
     rows = []
-    for i, seg in enumerate(segments, 1):
+    # 번호는 실제로 담은 구간에만 매긴다.
+    # enumerate 번호를 그대로 쓰면 빈 구간을 건너뛸 때마다 번호가 비고,
+    # 앞뒤 맥락을 seq 범위로 찾는 곳에서 구간이 조용히 빠진다.
+    for seg in segments:
         text = (seg.text or "").strip()
         if not text:
             continue
@@ -203,7 +206,7 @@ def transcribe(path, model_name: str = None, progress=None,
                 ensure_ascii=False,
             )
         rows.append({
-            "seq": i,
+            "seq": len(rows) + 1,
             "text": text,
             "start_sec": round(seg.start, 3),
             "end_sec": round(seg.end, 3),

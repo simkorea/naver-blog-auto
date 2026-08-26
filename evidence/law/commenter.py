@@ -210,12 +210,16 @@ def run(conn, only_tagged: bool = True, use_ai: bool = False,
 
 def list_comments(conn, status: str = "verified") -> list[dict]:
     """화면에 뿌릴 코멘트. 기본은 검증을 통과한 것만."""
+    # LEFT JOIN을 쓰는 이유:
+    # 코멘트가 가리키는 구간이 사라졌더라도 코멘트 자체는 보여야 한다.
+    # 특히 '차단된' 코멘트가 조용히 사라지면, 무엇이 걸러졌는지 알 수 없게 되어
+    # 이 기능의 목적이 정반대로 뒤집힌다.
     sql = """SELECT c.*, s.text, s.speaker_label, s.start_sec, s.page_no,
                     src.path, src.kind,
                     COALESCE(s.occurred_at, src.occurred_at) AS at
              FROM comments c
-             JOIN segments s ON s.id = c.segment_id
-             JOIN sources src ON src.id = s.source_id"""
+             LEFT JOIN segments s ON s.id = c.segment_id
+             LEFT JOIN sources src ON src.id = s.source_id"""
     args = []
     if status:
         sql += " WHERE c.citation_status = ?"

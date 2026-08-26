@@ -30,6 +30,19 @@ def _chunk(text: str, page_no=None, limit: int = MAX_CHARS) -> list[dict]:
         para = para.strip()
         if not para:
             continue
+
+        # 문단 하나가 한도보다 길 수 있다. 줄바꿈 없이 이어진 문서나
+        # OCR 결과가 그렇다. 그대로 두면 구간 하나가 수만 자가 되어
+        # 검색 결과에서 어디가 걸렸는지 보이지 않고, 엑셀 셀 한도(32,767자)도 넘는다.
+        while len(para) > limit:
+            head, para = _split_at_boundary(para, limit)
+            if buf:
+                out.append({"text": buf.strip(), "page_no": page_no})
+                buf = ""
+            out.append({"text": head.strip(), "page_no": page_no})
+
+        if not para:
+            continue
         if len(buf) + len(para) + 1 > limit and buf:
             out.append({"text": buf.strip(), "page_no": page_no})
             buf = para
@@ -38,6 +51,23 @@ def _chunk(text: str, page_no=None, limit: int = MAX_CHARS) -> list[dict]:
     if buf.strip():
         out.append({"text": buf.strip(), "page_no": page_no})
     return out
+
+
+def _split_at_boundary(text: str, limit: int) -> tuple[str, str]:
+    """
+    긴 문단을 자연스러운 자리에서 자른다.
+    문장 끝 > 공백 > 그냥 자르기 순으로 시도해, 단어 중간을 자르지 않는다.
+    """
+    window = text[:limit]
+    for marker in (". ", "다. ", "? ", "! ", "\n"):
+        idx = window.rfind(marker)
+        if idx > limit // 2:
+            cut = idx + len(marker)
+            return text[:cut], text[cut:]
+    idx = window.rfind(" ")
+    if idx > limit // 2:
+        return text[:idx], text[idx + 1:]
+    return text[:limit], text[limit:]
 
 
 # ─────────────────────────────────────────────────────────

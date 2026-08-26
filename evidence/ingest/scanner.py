@@ -21,7 +21,11 @@ from .. import config, db, integrity
 SKIP_DIRS = {".git", "__pycache__", "venv", ".venv", "node_modules",
              "$RECYCLE.BIN", "System Volume Information", "evidence_work"}
 SKIP_NAMES = {"Thumbs.db", ".DS_Store", "desktop.ini"}
-MIN_BYTES = 100          # 빈 파일 · 잔여물 제외
+
+# 내용이 아예 없는 파일만 거른다.
+# 예전에 100바이트로 잡았더니 짧은 메모·문자 내보내기·작은 캡처가
+# 말없이 사라졌다. 증거 도구에서 자료가 조용히 빠지는 것이 가장 나쁘다.
+MIN_BYTES = 1
 
 
 # ─────────────────────────────────────────────────────────
@@ -95,13 +99,23 @@ def audio_duration(path) -> float | None:
 # ─────────────────────────────────────────────────────────
 # 스캔
 # ─────────────────────────────────────────────────────────
-def walk(folder) -> list[Path]:
-    """대상 파일 목록을 모은다."""
+def walk(folder, skipped: list = None) -> list[Path]:
+    """
+    대상 파일 목록을 모은다.
+
+    skipped 목록을 넘기면 건너뛴 파일과 그 이유를 담아준다.
+    무엇이 빠졌는지 사용자가 알아야 한다 — 정작 필요한 증거가
+    조용히 누락되면 그것을 알 방법이 없다.
+    """
     root = Path(folder)
     if not root.exists():
         raise FileNotFoundError(f"폴더를 찾을 수 없습니다: {folder}")
     if root.is_file():
         return [root]
+
+    def note(path, reason):
+        if skipped is not None:
+            skipped.append({"path": str(path), "reason": reason})
 
     found = []
     for p in root.rglob("*"):
@@ -111,10 +125,13 @@ def walk(folder) -> list[Path]:
             continue
         try:
             if p.stat().st_size < MIN_BYTES:
+                note(p, "내용이 없는 파일")
                 continue
-        except OSError:
+        except OSError as e:
+            note(p, f"열 수 없음 ({e.strerror or e})")
             continue
         if config.classify(p) is None:
+            note(p, f"지원하지 않는 형식 ({p.suffix or '확장자 없음'})")
             continue
         if _is_kakao_continuation(p):
             # 카카오톡은 대화가 길면 1MB 단위로 파일을 쪼갠다.
@@ -146,7 +163,8 @@ def scan(conn, folder, progress=None, defaults: dict = None) -> dict:
     defaults: 전체에 일괄 적용할 값 (예: counterparty)
     """
     defaults = defaults or {}
-    files = walk(folder)
+    skipped = []
+    files = walk(folder, skipped=skipped)
     added, duplicate, failed = [], [], []
 
     for i, p in enumerate(files, 1):
@@ -181,6 +199,7 @@ def scan(conn, folder, progress=None, defaults: dict = None) -> dict:
         "added": added,
         "duplicate": duplicate,
         "failed": failed,
+        "skipped": skipped,
     }
 
 

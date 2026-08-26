@@ -26,6 +26,17 @@ HEADERS = [
 KIND_KR = {"audio": "녹음", "kakao": "카톡", "document": "문서",
            "image": "이미지", "email": "메일"}
 
+# 엑셀 셀 한 칸에 들어갈 수 있는 최대 글자 수.
+# 넘으면 엑셀이 파일을 열지 못하거나 내용을 잘라버린다.
+CELL_LIMIT = 32000
+
+
+def _fit(value):
+    """셀 한도를 넘으면 잘라내되, 잘렸다는 사실을 남긴다."""
+    if isinstance(value, str) and len(value) > CELL_LIMIT:
+        return value[:CELL_LIMIT] + " …(이하 생략)"
+    return value
+
 
 def write(rows: list[dict], out_path, title: str = "증거목록") -> Path:
     import openpyxl
@@ -82,7 +93,7 @@ def write(rows: list[dict], out_path, title: str = "증거목록") -> Path:
             r["reason"], r["sha256"],
         ]
         for c, v in enumerate(values, 1):
-            cell = ws.cell(row=row, column=c, value=v)
+            cell = ws.cell(row=row, column=c, value=_fit(v))
             cell.font = base_font
             cell.border = border
             cell.alignment = Alignment(

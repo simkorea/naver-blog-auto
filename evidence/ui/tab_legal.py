@@ -139,7 +139,7 @@ def _blocked(conn):
             "이런 인용을 그대로 제출하면 신뢰를 잃고 제재를 받을 수 있습니다."
         )
         for r in rows:
-            st.markdown(f"**{r['issue_name']}** — {r['text'][:70]}")
+            st.markdown(f"**{r['issue_name']}** — {(r['text'] or '(구간 없음)')[:70]}")
             st.error(r["block_reason"] or "사유 불명")
 
 
@@ -164,10 +164,13 @@ def _card(r):
     icon = STANCE_ICON.get(r["stance"], "·")
     loc = (hybrid.timecode(r["start_sec"]) if r["start_sec"] is not None
            else (f"{r['page_no']}쪽" if r["page_no"] else (r["at"] or "")[:16].replace("T", " ")))
+    # 가리키던 구간이 사라졌을 수 있다 (재분석 등). 그래도 코멘트는 보여준다.
+    where = Path(r["path"]).name if r.get("path") else "출처 없음"
 
     with st.container(border=True):
-        st.markdown(f"{icon} **{r['issue_name']}**　·　{Path(r['path']).name}　`{loc}`")
-        st.markdown(f"> {(r['text'] or '')[:300]}")
+        st.markdown(f"{icon} **{r['issue_name']}**　·　{where}"
+                    + (f"　`{loc}`" if loc else ""))
+        st.markdown(f"> {(r['text'] or '(구간을 찾을 수 없습니다)')[:300]}")
         st.caption(r["reasoning"])
 
         if r["citations"]:

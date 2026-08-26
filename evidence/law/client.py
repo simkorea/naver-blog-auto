@@ -92,21 +92,77 @@ def _request(url: str, params: dict, cache_kind: str = None,
 
 
 def _text(node, *names) -> str:
-    """XML 노드에서 첫 번째로 발견되는 값. 태그명이 버전마다 조금씩 다르다."""
+    """
+    XML 노드에서 값을 뽑는다. 태그명이 버전마다 조금씩 달라 후보를 여러 개 받는다.
+
+    `.text` 가 아니라 `itertext()` 를 쓰는 이유:
+    법제처 응답은 조문·판례 본문 안에 <br> 같은 표시 태그를 그대로 넣어 보낸다.
+    그러면 XML 파서가 그것을 자식 요소로 읽고, `.text` 는 **첫 자식 앞까지만**
+    돌려준다. 조문 절반이 소리 없이 사라지는 것이다.
+    증거로 쓸 원문에서 내용이 잘리는 것은 있어서는 안 된다.
+    """
     for n in names:
         el = node.find(n)
-        if el is not None and (el.text or "").strip():
-            return el.text.strip()
+        if el is None:
+            continue
+        # 자식 태그 사이사이의 텍스트까지 전부 모은다.
+        # <br/> 자리에는 줄바꿈을 남겨 문단 구분을 지킨다.
+        parts = []
+        for child in el.iter():
+            if child is not el and child.tag.lower().split("}")[-1] in _BREAK_TAGS:
+                parts.append("\n")
+            if child.text:
+                parts.append(child.text)
+            if child is not el and child.tail:
+                parts.append(child.tail)
+        value = "".join(parts).strip()
+        if value:
+            return value
     return ""
 
 
+# 본문에서 지워도 되는 표시용 태그. 이 목록에 없는 <...> 는 건드리지 않는다.
+_HTML_TAGS = (
+    "br|p|div|span|b|i|u|em|strong|font|a|img|sup|sub|small|big|"
+    "table|thead|tbody|tfoot|tr|td|th|ul|ol|li|dl|dt|dd|"
+    "h[1-6]|hr|pre|code|center|nobr|wbr|xml|html|body|head|meta|link|style|script"
+)
+_BREAK_TAGS = {"br", "p", "div", "tr", "li", "hr"}
+
+_TAG_RE = re.compile(rf"</?\s*(?:{_HTML_TAGS})(?:\s[^>]*)?/?\s*>", re.I)
+_ENTITY_RE = re.compile(r"&(lt|gt|amp|quot|apos|nbsp|#\d+);", re.I)
+
+_ENTITIES = {"lt": "<", "gt": ">", "amp": "&", "quot": '"',
+             "apos": "'", "nbsp": " "}
+
+
 def _clean(html: str) -> str:
-    """조문 본문에 섞인 태그와 개체를 정리한다."""
-    t = re.sub(r"<br\s*/?>", "\n", html or "", flags=re.I)
-    t = re.sub(r"<[^>]+>", "", t)
-    t = (t.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
-          .replace("&quot;", '"').replace("&nbsp;", " "))
-    return re.sub(r"[ \t]+", " ", t).strip()
+    """
+    본문에 섞인 표시용 태그를 정리한다.
+
+    아무 `<...>` 나 지우면 안 된다. 한국 법령·판례 본문에는
+    `<중개대상물>`, `<개정 2020. 6. 9.>` 처럼 꺾쇠를 실제 내용으로 쓴다.
+    그것까지 지우면 **조문에서 단어가 통째로 사라진다.** 그래서 알려진
+    HTML 태그 이름에만 해당할 때 지운다.
+    """
+    t = html or ""
+    t = re.sub(r"<br\s*/?>", "\n", t, flags=re.I)
+    t = re.sub(r"</\s*(?:p|div|tr|li)\s*>", "\n", t, flags=re.I)
+    t = _TAG_RE.sub("", t)
+
+    def _ent(m):
+        key = m.group(1).lower()
+        if key.startswith("#"):
+            try:
+                return chr(int(key[1:]))
+            except ValueError:
+                return m.group(0)
+        return _ENTITIES.get(key, m.group(0))
+
+    t = _ENTITY_RE.sub(_ent, t)
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
 
 
 # ─────────────────────────────────────────────────────────

@@ -149,7 +149,8 @@ def _evidence(doc, item):
     loc = (timecode(item["start_sec"]) if item["start_sec"] is not None
            else (f"{item['page_no']}쪽" if item["page_no"]
                  else (item["at"] or "")[:16].replace("T", " ")))
-    head = f"· {Path(item['path']).name}　{loc}"
+    where = Path(item["path"]).name if item.get("path") else "출처 없음"
+    head = f"· {where}　{loc}"
     if item.get("speaker_label"):
         head += f"　({item['speaker_label']})"
     _para(doc, head, size=9, color=(0x44, 0x44, 0x44), indent=24)

@@ -109,13 +109,23 @@ def assign(segments: list[dict], turns: list[dict]) -> list[dict]:
                 totals[t["speaker"]] = totals.get(t["speaker"], 0.0) + ov
 
         if totals:
-            best = max(totals, key=totals.get)
+            ordered = sorted(totals.items(), key=lambda x: -x[1])
+            best, best_ov = ordered[0]
             row["speaker"] = best
+
             span = max(0.01, e - s)
-            share = totals[best] / span
-            # 한 화자가 구간의 60%도 차지하지 못하면 말이 겹친 구간이다.
-            # 증거로 쓸 때 "누구 말인지 불확실"함을 알아야 한다.
-            if share < 0.6:
+            share = best_ov / span
+            runner_up = (ordered[1][1] / span) if len(ordered) > 1 else 0.0
+
+            # 누구 말인지 단정할 수 없는 두 경우
+            #   ① 1등 화자가 구간의 60%도 못 채운다 → 애초에 근거가 약하다
+            #   ② 2등 화자도 상당 부분을 차지한다 → 두 사람이 겹쳐 말했다
+            #
+            # ②를 따로 보는 이유: 화자 구간이 서로 겹치면 1등과 2등이
+            # 동시에 60%를 넘길 수 있다. 1등 점유율만 보면 완전한 겹침을
+            # "확실하다"고 통과시킨다. 발언을 엉뚱한 사람에게 귀속시키는 것은
+            # 증거에서 가장 치명적인 오류다.
+            if share < 0.6 or runner_up > 0.35:
                 row["speaker_uncertain"] = 1
                 row["confidence"] = round((row.get("confidence") or 0.7) * 0.8, 3)
         out.append(row)

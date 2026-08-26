@@ -67,10 +67,15 @@ def build(conn, out_root, target: str = "경찰서", case_name: str = "",
         raise PackageError("\n\n".join(check["blockers"]))
 
     items = check["items"]
+    # 폴더 이름이 겹치면 기존 제출물을 덮어쓴다.
+    # 이미 넘긴 자료를 말없이 지워버리는 일이 없게 고유 이름을 보장한다.
     stamp = datetime.now().strftime("%Y%m%d")
-    root = Path(out_root) / f"제출_{stamp}_{target}"
-    if root.exists():
-        root = Path(out_root) / f"제출_{stamp}_{target}_{datetime.now():%H%M}"
+    base = f"제출_{stamp}_{target}"
+    root = Path(out_root) / base
+    n = 2
+    while root.exists():
+        root = Path(out_root) / f"{base}_{n}"
+        n += 1
     orig_dir = root / "원본"
     clip_dir = root / "발췌본"
     for d in (root, orig_dir, clip_dir):
