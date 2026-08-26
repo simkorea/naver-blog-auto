@@ -18,8 +18,10 @@
 import sys
 
 
-def setup() -> None:
+def setup(quiet_warnings: bool = True) -> None:
     """CLI 진입점 맨 앞에서 한 번 부른다."""
+    if quiet_warnings:
+        quiet_known_warnings()
     for stream in (sys.stdout, sys.stderr):
         try:
             # 파이썬 3.7+
@@ -27,6 +29,50 @@ def setup() -> None:
         except (AttributeError, ValueError, OSError):
             # 리다이렉트된 경우 등 — 조용히 넘어간다
             pass
+
+
+# ─────────────────────────────────────────────────────────
+# 경고 소음 정리
+# ─────────────────────────────────────────────────────────
+# 오류가 아닌데 화면 한복판에 길게 뜨는 것들. 사용자는 이걸 오류로 읽는다.
+#
+# 여기 적은 것만 숨긴다. 목록에 없는 경고는 그대로 둔다 —
+# 진짜 문제를 숨기는 것이 소음보다 훨씬 나쁘다.
+_HARMLESS = [
+    # torchaudio 가 TorchCodec 으로 넘어가며 내는 폐기 예고.
+    # 우리는 이 때문에 torchaudio 2.8 로 고정했다. 예고일 뿐 지금은 정상 동작한다.
+    ("torchaudio._backend", None),
+    ("has been deprecated", "torchaudio"),
+    ("TorchCodec", "torchaudio"),
+    # GPU 커널 최적화 도구가 없다는 알림. 없어도 동작한다.
+    ("triton not found", None),
+    # 모델 파일 형식 관련 안내
+    ("TypedStorage is deprecated", None),
+    ("torch.load", "weights_only"),
+]
+
+
+def quiet_known_warnings() -> None:
+    """알려진 무해한 경고만 숨긴다."""
+    import warnings
+
+    for text, module in _HARMLESS:
+        try:
+            warnings.filterwarnings(
+                "ignore",
+                message=f".*{text}.*",
+                module=f".*{module}.*" if module else "",
+            )
+        except Exception:
+            continue
+
+    # 로깅으로 나오는 것도 있다 (경고 필터로는 안 잡힌다)
+    try:
+        import logging
+        logging.getLogger("torio").setLevel(logging.ERROR)
+        logging.getLogger("torchaudio").setLevel(logging.ERROR)
+    except Exception:
+        pass
 
 
 # 화면 기호. 콘솔이 못 그리는 환경이면 ASCII로 대체된다.

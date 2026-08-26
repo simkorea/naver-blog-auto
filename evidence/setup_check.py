@@ -733,6 +733,104 @@ def repair() -> None:
     print(M["dline"] * 68 + "\n")
 
 
+TOKEN_GUIDE = {
+    "HF_TOKEN": {
+        "label": "화자 분리 (누가 말했는지 구분)",
+        "steps": [
+            "1. https://huggingface.co 가입 후 로그인",
+            "2. 우측 상단 프로필 -> Settings -> Access Tokens -> New token",
+            "   (Type 은 Read 로)",
+            "3. https://huggingface.co/pyannote/speaker-diarization-3.1 접속",
+            "   -> 이용 약관에 동의  <- 이걸 빠뜨리면 토큰이 있어도 안 됩니다",
+        ],
+        "check": lambda v: v.startswith("hf_") and len(v) > 20,
+        "hint": "보통 hf_ 로 시작합니다",
+    },
+    "LAW_OC": {
+        "label": "법률 코멘트 (관련 조문·판례)",
+        "steps": [
+            "1. https://open.law.go.kr 접속 후 로그인",
+            "2. OPEN API -> 활용신청 (무료, 즉시 발급)",
+        ],
+        "check": lambda v: len(v) >= 2,
+        "hint": "보통 아이디 형태의 짧은 문자열입니다",
+    },
+}
+
+
+def _write_env_value(key: str, value: str) -> None:
+    """
+    .env 의 해당 줄만 갈아끼운다.
+    다른 설정은 건드리지 않는다 — 사용자가 손으로 넣어둔 값이 있을 수 있다.
+    """
+    env = ensure_env()
+    lines = env.read_text(encoding="utf-8", errors="ignore").splitlines()
+    done = False
+    for i, line in enumerate(lines):
+        if line.strip().startswith(f"{key}="):
+            lines[i] = f"{key}={value}"
+            done = True
+            break
+    if not done:
+        lines.append(f"{key}={value}")
+    env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def setup_tokens() -> None:
+    """인증키를 물어보고 .env 에 대신 써준다."""
+    print()
+    print(M["dline"] * 68)
+    print("  인증키 입력")
+    print(M["dline"] * 68)
+    print()
+    print("  둘 다 무료이고, 없어도 나머지 기능은 모두 동작합니다.")
+    print("  건너뛰려면 그냥 Enter 를 누르세요.")
+
+    import os
+
+    for key, info in TOKEN_GUIDE.items():
+        current = os.getenv(key, "")
+        print()
+        print(M["line"] * 68)
+        print(f"  {key} - {info['label']}")
+        if current:
+            masked = current[:6] + "..." + current[-4:] if len(current) > 12 else "설정됨"
+            print(f"  이미 설정되어 있습니다: {masked}")
+            print("  바꾸려면 새 값을 넣고, 그대로 두려면 Enter")
+        else:
+            for line in info["steps"]:
+                print(f"    {line}")
+        print()
+        try:
+            value = input(f"  {key} = ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  입력을 건너뜁니다.")
+            break
+
+        if not value:
+            print("  건너뜁니다.")
+            continue
+        if not info["check"](value):
+            print(f"  {M['no']} 형식이 이상합니다 ({info['hint']}). 그래도 저장할까요?")
+            try:
+                if input("     저장 (y/N): ").strip().lower() != "y":
+                    print("  저장하지 않았습니다.")
+                    continue
+            except (EOFError, KeyboardInterrupt):
+                continue
+
+        _write_env_value(key, value)
+        os.environ[key] = value
+        print(f"  {M['ok']} 저장했습니다.")
+
+    print()
+    print(M["line"] * 68)
+    print("  다음 단계")
+    print("      python evidence/setup_check.py --models     (AI 모델 받기)")
+    print("      python evidence/setup_check.py --selftest   (전 과정 점검)")
+    print(M["dline"] * 68 + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description="증거파인더 설치 도우미")
     ap.add_argument("--install", action="store_true", help="부족한 것 설치")
@@ -742,9 +840,18 @@ def main():
                     help="모델을 미리 받을지 물어본 뒤 받기")
     ap.add_argument("--repair", action="store_true",
                     help="설치가 꼬였을 때 되돌리기 (GPU 가속·DLL 오류)")
+    ap.add_argument("--token", action="store_true",
+                    help="인증키를 물어보고 .env 에 저장")
+    ap.add_argument("--selftest", action="store_true",
+                    help="가짜 사건으로 전 과정을 한 번 돌려본다")
     args = ap.parse_args()
 
-    if args.repair:
+    if args.selftest:
+        from evidence.selftest import run as run_selftest
+        raise SystemExit(0 if run_selftest(M) else 1)
+    elif args.token:
+        setup_tokens()
+    elif args.repair:
         repair()
     elif args.ask_models:
         _ask_models()
