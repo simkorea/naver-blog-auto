@@ -54,6 +54,10 @@ _HARMLESS = [
     # 모델은 정상적으로 받아지고 정상적으로 읽힌다.
     ("cache-system uses symlinks", None),
     ("does not support symlinks", None),
+    # speechbrain 1.0 에서 모듈 이름이 바뀐 안내. pyannote 가 옛 이름으로
+    # 부르지만 speechbrain 이 알아서 새 이름으로 넘겨준다. 동작에 문제 없다.
+    ("was deprecated, redirecting to", None),
+    ("speechbrain.pretrained", None),
 ]
 
 

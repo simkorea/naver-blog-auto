@@ -27,12 +27,17 @@
 ```
 python evidence/setup_check.py          현재 상태 확인
 python evidence/setup_check.py --go     남은 준비 (모델 받기 + 자체 점검 3분)
-python tests/run_all.py                 회귀 159항목
+python tests/run_all.py                 회귀 164항목
 ```
 
 마지막으로 확인된 것: 음성 인식·의미 검색·OCR 모델 완료, 화자 분리 모델은
-`Weights only load failed` 로 두 번 실패한 뒤 `bf0b413` 에서 고쳤으나
+`Weights only load failed` 를 고친 뒤 내려받기까지 확인됐다.
+자체 점검은 **8 통과 · 1 실패** — 남은 것은 화자 분리 실행 단계의
+speechbrain `k2_fsa` ImportError 이고, 위 표의 마지막 줄에서 고쳤다.
 **사용자 PC에서 아직 확인되지 않았다.** 이것이 첫 번째 할 일이다.
+
+확인된 성능: RTX 5060 Laptop + large-v3 로 20초 녹음을 9.1초에 전사.
+1시간 녹음이면 약 27분.
 
 ## 절대 하지 말 것
 
@@ -61,6 +66,7 @@ python tests/run_all.py                 회귀 159항목
 | `use_auth_token` 오류 | pyannote 3.x ↔ huggingface_hub 1.x | `diarize._ensure_hf_compat()` |
 | `Weights only load failed` | torch 2.6 기본값 변경 + lightning 이 `weights_only` 를 **명시적으로** 넘김 | `diarize._allow_full_checkpoint_load()` — 명시값도 덮어씀 |
 | 새 ZIP 받으면 인증키·DB 사라짐 | 윈도우가 `... (2)`, `(3)` 새 폴더에 품 | 자료를 `~/EvidenceFinder` 로 분리 (`config._data_path`) |
+| 화자 분리 실행 중 `k2_fsa` ImportError | speechbrain 이 옛 경로를 지연 껍데기로 등록 → `inspect.getmodule()` 이 `sys.modules` 를 훑으며 `hasattr(m,'__file__')` 로 로딩을 유발 → `k2`(윈도우 배포판 없음) 없어 터짐 | `diarize._defuse_speechbrain_redirects()` — 깨진 껍데기만 빈 모듈로 교체 |
 
 ## 검증 규칙
 
@@ -73,7 +79,7 @@ python tests/run_all.py                 회귀 159항목
 실패하지 않으면 그 검증은 아무것도 지키지 못한다.
 
 ```
-python tests/run_all.py     # 커밋 전 항상. 159항목, 1초.
+python tests/run_all.py     # 커밋 전 항상. 164항목.
 ```
 
 이 컨테이너 밖에서만 확인 가능한 것: Whisper 한국어 품질, pyannote 정확도,
@@ -81,12 +87,11 @@ python tests/run_all.py     # 커밋 전 항상. 159항목, 1초.
 
 ## 다음에 할 일
 
-1. `--go` 로 화자 분리 모델 받기 성공 확인
-2. 자체 점검 통과 확인 (`--selftest`, 3분)
-3. 녹음 1~2개 + 카톡 1개만 넣어 시범 운영 — **고유명사 사전부터 채운다**
+1. `--selftest` 로 화자 분리까지 9/9 통과 확인
+2. 녹음 1~2개 + 카톡 1개만 넣어 시범 운영 — **고유명사 사전부터 채운다**
    (사람 이름·상호·단지명. 인식률에 가장 크게 영향)
-4. 전사 품질 눈으로 확인 → 사전 보강 → 재실행
-5. 만족스러우면 전체 투입 (밤새)
-6. 타임라인의 "★ 진술이 바뀐 정황" 부터 검토 → 발췌 담기 → 제출 패키지
+3. 전사 품질 눈으로 확인 → 사전 보강 → 재실행
+4. 만족스러우면 전체 투입 (밤새)
+5. 타임라인의 "★ 진술이 바뀐 정황" 부터 검토 → 발췌 담기 → 제출 패키지
 
 자세한 사용법은 `evidence/README_증거분석.md`.
