@@ -529,6 +529,13 @@ def finish_setup() -> int:
     그게 없으면 점검의 대부분이 실패할 것이고, 3분을 버리게 하는 셈이다.
     """
     ensure_env()
+
+    # 화자 분리 모델은 인증키가 있어야 받는다. 새로 받은 폴더라 인증키만
+    # 두고 온 경우가 잦으므로, 받기 전에 옆 폴더를 먼저 살펴본다.
+    import os
+    if not os.getenv("HF_TOKEN"):
+        import_previous_env(ask=True)
+
     result = download_models()
     _report_models(result)
 
@@ -879,12 +886,145 @@ def _write_env_value(key: str, value: str) -> None:
     env.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+TOKEN_KEYS = ("HF_TOKEN", "LAW_OC")
+
+
+def _read_env_values(path: Path) -> dict:
+    """.env 파일에서 인증키만 뽑아 읽는다. 값이 빈 줄은 없는 것으로 본다."""
+    out = {}
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key in TOKEN_KEYS and value:
+            out[key] = value
+    return out
+
+
+def find_previous_env(limit: int = 400) -> list[tuple[Path, dict]]:
+    """
+    예전 폴더에 두고 온 인증키 파일을 찾는다.
+
+    왜 필요한가
+      윈도우는 같은 이름의 ZIP 을 받으면 `... (2)`, `... (3)` 처럼
+      새 폴더에 푼다. 예전 버전은 인증키를 프로그램 폴더 안에 두었으므로,
+      새로 받은 폴더에서는 인증키가 없어진 것처럼 보인다.
+      실제로는 옆 폴더에 멀쩡히 있다. 새로 발급받게 할 이유가 없다.
+
+    지금 폴더 · 위 폴더 · 그 위 폴더까지만 훑는다.
+    더 넓게 뒤지면 남의 프로젝트 .env 까지 들여다보게 된다.
+    """
+    from evidence import config
+
+    here = config.PROJECT_DIR
+    current = config.ENV_FILE.resolve() if config.ENV_FILE.exists() else None
+
+    seen, found, scanned = set(), [], 0
+    for root in (here, here.parent, here.parent.parent):
+        try:
+            if not root.is_dir():
+                continue
+            candidates = [root / ".env", *root.glob("*/.env"), *root.glob("*/*/.env")]
+        except OSError:
+            continue
+        for cand in candidates:
+            scanned += 1
+            if scanned > limit:
+                break
+            try:
+                resolved = cand.resolve()
+            except OSError:
+                continue
+            if resolved in seen or resolved == current or not cand.is_file():
+                continue
+            seen.add(resolved)
+            values = _read_env_values(cand)
+            if values:
+                found.append((cand, values))
+    return found
+
+
+def import_previous_env(ask: bool = True) -> dict:
+    """
+    예전 폴더의 인증키를 지금 자리로 가져온다.
+
+    이미 값이 들어 있는 항목은 건드리지 않는다 —
+    사용자가 방금 넣은 새 키를 옛 키로 덮어쓰면 안 된다.
+    """
+    import os
+
+    missing = [k for k in TOKEN_KEYS if not os.getenv(k)]
+    if not missing:
+        return {}
+
+    found = find_previous_env()
+    usable = [(p, {k: v for k, v in vals.items() if k in missing})
+              for p, vals in found]
+    usable = [(p, vals) for p, vals in usable if vals]
+    if not usable:
+        return {}
+
+    path, values = usable[0]
+    print()
+    print(f"  {M['ok']} 예전 폴더에서 인증키를 찾았습니다.")
+    print(f"     {path}")
+    for key in values:
+        print(f"     - {key}")
+    print("     새로 발급받지 않아도 됩니다.")
+
+    if ask:
+        print()
+        try:
+            answer = input("  가져올까요? (Y/n): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return {}
+        if answer in ("n", "no", "아니오", "아니"):
+            print("  가져오지 않았습니다.")
+            return {}
+
+    for key, value in values.items():
+        _apply_token(key, value)
+    print(f"  {M['ok']} {', '.join(values)} 을(를) 가져왔습니다.")
+    return values
+
+
+def _apply_token(key: str, value: str) -> None:
+    """
+    인증키를 저장하고 **지금 실행 중인 과정에도** 반영한다.
+
+    config 는 불러올 때 한 번만 값을 읽는다. 파일만 고치면
+    같은 실행 안에서 이어지는 단계(--go 의 모델 받기)는 여전히
+    "인증키가 없다"고 판단한다. 실제로 그렇게 어긋난 적이 있다.
+    """
+    import os
+
+    _write_env_value(key, value)
+    os.environ[key] = value
+    try:
+        from evidence import config
+        if hasattr(config, key):
+            setattr(config, key, value)
+    except BaseException:
+        pass
+
+
 def setup_tokens() -> None:
     """인증키를 물어보고 .env 에 대신 써준다."""
     print()
     print(M["dline"] * 68)
     print("  인증키 입력")
     print(M["dline"] * 68)
+
+    # 새로 발급받게 하기 전에, 예전 폴더에 두고 온 것이 없는지 먼저 본다
+    import_previous_env(ask=True)
+
     print()
     print("  둘 다 무료이고, 없어도 나머지 기능은 모두 동작합니다.")
     print("  건너뛰려면 그냥 Enter 를 누르세요.")
@@ -922,8 +1062,7 @@ def setup_tokens() -> None:
             except (EOFError, KeyboardInterrupt):
                 continue
 
-        _write_env_value(key, value)
-        os.environ[key] = value
+        _apply_token(key, value)
         print(f"  {M['ok']} 저장했습니다.")
 
     print()
