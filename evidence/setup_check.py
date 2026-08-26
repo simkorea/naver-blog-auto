@@ -50,7 +50,31 @@ PACKAGES = [
     ("환경 변수",    "dotenv",                "python-dotenv>=1.0.0",         "인증키 읽기"),
 ]
 
-CUDA_INDEX = "https://download.pytorch.org/whl/cu124"
+# 그래픽카드 세대마다 필요한 CUDA 버전이 다르다.
+# RTX 50 시리즈(Blackwell)는 CUDA 12.8 이상이어야 한다. 12.4 빌드를 깔면
+# 카드는 인식되는데 정작 연산에서 터진다 — 더 나쁜 실패다.
+CUDA_INDEX_DEFAULT = "https://download.pytorch.org/whl/cu126"
+CUDA_INDEX_BLACKWELL = "https://download.pytorch.org/whl/cu128"
+
+# RTX 50 시리즈 · 최신 워크스테이션 카드
+_BLACKWELL = ("rtx 50", "rtx50", "5050", "5060", "5070", "5080", "5090",
+              "rtx pro", "b200", "gb200")
+
+# torch 와 버전이 묶여 있어 함께 다뤄야 하는 것들.
+# 이걸 따로 두면 나중에 다른 패키지가 CPU 빌드를 다시 끌어온다.
+TORCH_PKGS = ("torch", "torchaudio")
+
+# 우리 프로그램이 쓰지 않는데 DLL 충돌만 일으키는 것.
+# torchaudio 가 딸려 들여오지만, 없어도 전사·화자분리 모두 동작한다.
+TROUBLE_PKGS = ("torchcodec",)
+
+
+def cuda_index_for(gpu_name: str | None) -> str:
+    """카드 이름을 보고 맞는 CUDA 빌드를 고른다."""
+    name = (gpu_name or "").lower()
+    if any(k in name for k in _BLACKWELL):
+        return CUDA_INDEX_BLACKWELL
+    return CUDA_INDEX_DEFAULT
 
 
 def _run(cmd, **kw):
@@ -113,40 +137,67 @@ def torch_status() -> dict:
         return {"installed": False, "cuda": False, "reason": str(e)}
 
 
-def install_torch() -> bool:
+def install_torch(force: bool = False) -> bool:
     """
     GPU가 있으면 CUDA 빌드를, 없으면 CPU 빌드를 깐다.
 
     이게 사람들이 가장 많이 틀리는 부분이다. 그냥 `pip install torch` 하면
-    GPU가 있어도 CPU 빌드가 깔려서, 전사가 10배 느린데 원인을 모른다.
+    GPU가 있어도 CPU 빌드가 깔려서 전사가 10배 느린데 원인을 모른다.
+
+    force=True 는 다른 패키지가 torch 를 CPU 빌드로 덮어쓴 뒤 되돌릴 때 쓴다.
     """
     gpu = detect_nvidia()
     st = torch_status()
 
-    if st["installed"] and st.get("cuda"):
-        print(f"    이미 GPU 가속으로 설치되어 있습니다 — {st['gpu']}")
+    if st["installed"] and st.get("cuda") and not force:
+        print(f"    이미 GPU 가속으로 설치되어 있습니다 - {st['gpu']}")
         return True
 
-    if gpu:
-        if st["installed"] and st.get("is_cpu_build"):
-            print(f"    그래픽카드({gpu})가 있는데 CPU 전용 torch가 깔려 있습니다.")
-            print("    GPU 빌드로 다시 설치합니다 (전사 속도가 5~10배 빨라집니다).")
-            _pip("uninstall", "-y", "torch")
-        else:
-            print(f"    그래픽카드 감지: {gpu}")
-        print("    CUDA 빌드를 설치합니다 (2GB 내외, 몇 분 걸립니다)")
-        rc = _pip("torch", "--index-url", CUDA_INDEX)
-        if rc != 0:
-            print("    CUDA 빌드 실패 → CPU 빌드로 시도합니다")
-            rc = _pip("torch")
-        return rc == 0
+    if not gpu:
+        if st["installed"] and not force:
+            print("    이미 설치되어 있습니다 (CPU 전용)")
+            return True
+        print("    그래픽카드가 없어 CPU 빌드를 설치합니다")
+        print("    (녹음 전사가 느립니다. 1시간 녹음에 20~40분)")
+        return _pip(*TORCH_PKGS) == 0
 
-    if st["installed"]:
-        print("    이미 설치되어 있습니다 (CPU 전용)")
-        return True
-    print("    그래픽카드가 없어 CPU 빌드를 설치합니다")
-    print("    (녹음 전사가 느립니다. 1시간 녹음에 20~40분)")
-    return _pip("torch") == 0
+    index = cuda_index_for(gpu)
+    tag = index.rsplit("/", 1)[-1]
+
+    if st["installed"] and not st.get("cuda"):
+        print(f"    그래픽카드({gpu})가 있는데 CPU 전용 torch 가 깔려 있습니다.")
+        print("    GPU 빌드로 다시 설치합니다 (전사 속도가 5~10배 빨라집니다).")
+    else:
+        print(f"    그래픽카드 감지: {gpu}")
+
+    # 섞인 버전이 남아 있으면 DLL 이 어긋난다. 먼저 걷어낸다.
+    _pip("uninstall", "-y", *TORCH_PKGS, *TROUBLE_PKGS)
+
+    print(f"    {tag} 빌드를 설치합니다 (2GB 내외, 몇 분 걸립니다)")
+    rc = _pip(*TORCH_PKGS, "--index-url", index)
+    if rc != 0 and index != CUDA_INDEX_DEFAULT:
+        print(f"    {tag} 설치 실패 -> 기본 CUDA 빌드로 시도합니다")
+        rc = _pip(*TORCH_PKGS, "--index-url", CUDA_INDEX_DEFAULT)
+    if rc != 0:
+        print("    CUDA 빌드 실패 -> CPU 빌드로 시도합니다")
+        rc = _pip(*TORCH_PKGS)
+    return rc == 0
+
+
+def remove_trouble_packages() -> None:
+    """
+    DLL 충돌을 일으키는데 우리는 쓰지 않는 패키지를 걷어낸다.
+
+    torchcodec 은 torchaudio 를 깔 때 딸려오는데, torch 버전과 조금만
+    어긋나도 파이썬을 켜는 순간 "코드 실행을 계속할 수 없습니다" 라는
+    시스템 오류 창이 뜬다. 우리 프로그램은 이걸 쓰지 않는다.
+    """
+    for pkg in TROUBLE_PKGS:
+        module = pkg.replace("-", "_")
+        ok, _ = _installed(module)
+        if ok:
+            print(f"    {pkg} 제거 (DLL 충돌 방지, 이 프로그램은 쓰지 않습니다)")
+            _pip("uninstall", "-y", pkg, quiet=True)
 
 
 # ─────────────────────────────────────────────────────────
@@ -335,7 +386,7 @@ def report() -> list:
         print(f"  가속   : {M['ok']} GPU 사용 - {st['gpu']}")
     elif gpu:
         print(f"  가속   : {M['no']} 그래픽카드({gpu})가 있는데 GPU 빌드가 아닙니다")
-        print("           → python evidence/setup_check.py --install 로 고칠 수 있습니다")
+        print("           -> python evidence/setup_check.py --repair 로 고칠 수 있습니다")
     elif st["installed"]:
         print("  가속   : CPU 전용 (녹음 전사가 느립니다)")
     else:
@@ -370,14 +421,15 @@ def report() -> list:
 
 
 def install_all() -> None:
-    print("\n" + M["dline"] * 68)
+    print()
+    print(M["dline"] * 68)
     print("  증거파인더 설치")
     print(M["dline"] * 68)
 
-    print("\n  [1/3] torch (음성 인식·의미 검색의 토대)")
+    print("\n  [1/4] torch (음성 인식·의미 검색의 토대)")
     install_torch()
 
-    print("\n  [2/3] 나머지 라이브러리")
+    print("\n  [2/4] 나머지 라이브러리")
     # 요구사항 파일을 먼저 시도하되, 실패하면 목록으로 직접 깐다.
     # 한국어 윈도우에서 pip 이 요구사항 파일을 cp949 로 읽다 죽는 일이 있었다.
     # 파일 하나 때문에 설치 전체가 멈추면 안 된다.
@@ -396,7 +448,27 @@ def install_all() -> None:
                 if _pip(pkg) != 0:
                     print(f"    {M['no']} {pkg} 설치 실패 - {purpose} 기능을 못 씁니다")
 
-    print("\n  [3/3] 설정 파일")
+    # ── 여기가 중요하다 ──────────────────────────────
+    # 위에서 깐 패키지들(pyannote 등)이 자기 버전 torch 를 끌어오면서
+    # 방금 깐 CUDA 빌드를 CPU 빌드로 덮어쓴다. 그러면 그래픽카드가 있는데도
+    # 전사가 10배 느려지고, 사용자는 원인을 모른다.
+    # 그래서 마지막에 다시 확인하고 필요하면 되돌린다.
+    print("\n  [3/4] GPU 가속 확인")
+    remove_trouble_packages()
+    gpu = detect_nvidia()
+    st = torch_status()
+    if gpu and not st.get("cuda"):
+        print("    다른 패키지가 torch 를 CPU 빌드로 덮어썼습니다. 되돌립니다.")
+        install_torch(force=True)
+        st = torch_status()
+    if st.get("cuda"):
+        print(f"    {M['ok']} GPU 가속 사용 - {st['gpu']}")
+    elif gpu:
+        print(f"    {M['no']} GPU 가속을 켜지 못했습니다. CPU 로 동작합니다(느립니다).")
+    else:
+        print("    그래픽카드가 없어 CPU 로 동작합니다.")
+
+    print("\n  [4/4] 설정 파일")
     ensure_env()
 
     print("\n" + M["line"] * 68)
@@ -406,46 +478,36 @@ def install_all() -> None:
         print("    1) AI 모델 미리 받기 (권장):")
         print("         python evidence/setup_check.py --models")
         print("    2) 실행:")
-        print("         streamlit run evidence/app.py")
+        print("         python -m streamlit run evidence/app.py")
         print()
 
 
-def _ask_models() -> None:
+def repair() -> None:
     """
-    모델을 미리 받을지 물어본다.
+    설치가 꼬였을 때 되돌린다.
 
-    한글 안내를 배치 파일이 아니라 여기서 출력하는 이유:
-    배치 파일에 한글을 넣으면 chcp 전환 시점 때문에 글자가 깨지거나
-    cmd가 파일 안에서 위치를 잃는 문제가 있다. 파이썬이 출력하면 안전하다.
+    가장 흔한 경우: 다른 패키지가 torch 를 CPU 빌드로 덮어써서
+    그래픽카드가 있는데도 느리거나, torchcodec DLL 오류 창이 뜬다.
     """
     print()
     print(M["dline"] * 68)
-    print("  AI 모델을 미리 받아둘까요?")
+    print("  설치 고치기")
     print(M["dline"] * 68)
-    print()
-    print("  약 4GB를 내려받습니다. 시간이 걸리지만 한 번 받아두면")
-    print("  이후에는 인터넷 없이도 동작하고, 급할 때 기다리지 않아도 됩니다.")
-    print()
-    try:
-        ans = input("  지금 받을까요? (Y/N): ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        ans = "n"
 
-    if ans in ("y", "ㅛ", "예", "네"):
-        ensure_env()
-        _report_models(download_models())
+    print("\n  [1/2] DLL 충돌 패키지 정리")
+    remove_trouble_packages()
+
+    print("\n  [2/2] torch 를 그래픽카드에 맞게 다시 설치")
+    install_torch(force=True)
+
+    print("\n" + M["line"] * 68)
+    st = torch_status()
+    if st.get("cuda"):
+        print(f"  {M['ok']} GPU 가속 사용 - {st['gpu']}")
     else:
-        print()
-        print("  건너뛰었습니다. 나중에 받으려면:")
-        print("      python evidence/setup_check.py --models")
-
-    print()
-    print(M["dline"] * 68)
-    print("  설치가 끝났습니다.")
-    print()
-    print('  실행하려면 evidence 폴더의 "실행.bat" 을 더블클릭하세요.')
-    print(M["dline"] * 68)
-    print()
+        print(f"  {M['no']} 아직 GPU 가속이 켜지지 않았습니다.")
+        print("     화면에 뜬 메시지를 확인해 주세요.")
+    print(M["dline"] * 68 + "\n")
 
 
 def main():
@@ -455,9 +517,13 @@ def main():
     ap.add_argument("--env", action="store_true", help=".env 파일만 만들기")
     ap.add_argument("--ask-models", action="store_true",
                     help="모델을 미리 받을지 물어본 뒤 받기")
+    ap.add_argument("--repair", action="store_true",
+                    help="설치가 꼬였을 때 되돌리기 (GPU 가속·DLL 오류)")
     args = ap.parse_args()
 
-    if args.ask_models:
+    if args.repair:
+        repair()
+    elif args.ask_models:
         _ask_models()
     elif args.install:
         install_all()
