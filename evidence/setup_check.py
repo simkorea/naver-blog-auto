@@ -517,6 +517,37 @@ def _report_models(result: dict) -> None:
         print(f"  {M['ok']} 모델 준비가 끝났습니다. 이제 인터넷 없이도 동작합니다.")
 
 
+def finish_setup() -> int:
+    """
+    남은 준비를 한 번에 끝낸다 — 모델 받기 → 자체 점검.
+
+    왜 합쳤나
+      두 단계를 따로 두면 "다음에 뭘 치더라?"를 매번 물어보게 된다.
+      순서가 정해져 있고 사이에 판단할 것이 없다면 하나로 묶는 게 맞다.
+
+    음성 인식 모델을 못 받았으면 자체 점검으로 넘어가지 않는다.
+    그게 없으면 점검의 대부분이 실패할 것이고, 3분을 버리게 하는 셈이다.
+    """
+    ensure_env()
+    result = download_models()
+    _report_models(result)
+
+    whisper_ok = any(ok for k, ok in result.items() if k.startswith("whisper"))
+    if not whisper_ok:
+        print()
+        print(f"  {M['no']} 음성 인식 모델이 없어 자체 점검은 건너뜁니다.")
+        print("     위 메시지를 그대로 알려주시면 원인을 찾아드리겠습니다.")
+        return 1
+
+    print()
+    print(f"  {M['line'] * 60}")
+    print("  이어서 자체 점검을 시작합니다 (약 3분).")
+    print(f"  {M['line'] * 60}")
+
+    from evidence.selftest import run as run_selftest
+    return 0 if run_selftest(M) else 1
+
+
 # ─────────────────────────────────────────────────────────
 # .env
 # ─────────────────────────────────────────────────────────
@@ -895,9 +926,13 @@ def main():
                     help="인증키를 물어보고 .env 에 저장")
     ap.add_argument("--selftest", action="store_true",
                     help="가짜 사건으로 전 과정을 한 번 돌려본다")
+    ap.add_argument("--go", action="store_true",
+                    help="남은 준비를 한 번에 (모델 받기 + 자체 점검)")
     args = ap.parse_args()
 
-    if args.selftest:
+    if args.go:
+        raise SystemExit(finish_setup())
+    elif args.selftest:
         from evidence.selftest import run as run_selftest
         raise SystemExit(0 if run_selftest(M) else 1)
     elif args.token:
