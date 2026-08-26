@@ -153,27 +153,40 @@ def install_torch() -> bool:
 # 모델 미리 받기
 # ─────────────────────────────────────────────────────────
 def download_models(whisper: bool = True, embed: bool = True,
-                    ocr: bool = True, diarize: bool = True) -> None:
+                    ocr: bool = True, diarize: bool = True) -> dict:
     """
     첫 실행 때 받을 것을 미리 받아둔다.
 
     급할 때 다운로드를 기다리는 것만큼 답답한 일이 없다.
     한 번 받아두면 다음부터는 인터넷 없이도 동작한다.
+
+    돌려주는 값: {모델이름: 성공여부}
+    하나도 못 받았는데 "준비가 끝났습니다"라고 하면 안 된다.
+    사용자가 다 됐다고 믿고 넘어가면 정작 필요할 때 멈춘다.
     """
-    sys.path.insert(0, str(ROOT.parent))
     from evidence import config
+
+    result = {}
+
+    def _note(name, ok, msg=""):
+        result[name] = ok
+        mark = M["ok"] if ok else M["no"]
+        print(f"        {mark} {msg}" if msg else f"        {mark}")
 
     if whisper:
         print("\n  [1/4] 음성 인식 모델")
         try:
             from faster_whisper import WhisperModel
-            hw = config.hardware()
             for name in (config.WHISPER_PRIMARY, config.WHISPER_SECONDARY):
                 print(f"        {name} 받는 중... (약 1.5GB, 몇 분 걸립니다)")
                 WhisperModel(name, device="cpu", compute_type="int8")
-                print(f"        {name} 완료")
+                _note(f"whisper:{name}", True, f"{name} 완료")
+        except ModuleNotFoundError:
+            _note("whisper", False,
+                  "faster-whisper 가 설치되지 않았습니다 "
+                  "-> python evidence/setup_check.py --install 을 먼저 실행하세요")
         except BaseException as e:
-            print(f"        건너뜀 — {type(e).__name__}: {e}")
+            _note("whisper", False, f"실패 - {type(e).__name__}: {e}")
 
     if embed:
         print("\n  [2/4] 의미 검색 모델")
@@ -181,9 +194,13 @@ def download_models(whisper: bool = True, embed: bool = True,
             from sentence_transformers import SentenceTransformer
             print(f"        {config.EMBED_MODEL} 받는 중... (약 2.3GB)")
             SentenceTransformer(config.EMBED_MODEL, device="cpu")
-            print("        완료")
+            _note("embed", True, "완료")
+        except ModuleNotFoundError:
+            _note("embed", False,
+                  "sentence-transformers 가 설치되지 않았습니다 "
+                  "-> --install 을 먼저 실행하세요")
         except BaseException as e:
-            print(f"        건너뜀 — {type(e).__name__}: {e}")
+            _note("embed", False, f"실패 - {type(e).__name__}: {e}")
 
     if ocr:
         print("\n  [3/4] 이미지 글자 인식 모델")
@@ -191,25 +208,54 @@ def download_models(whisper: bool = True, embed: bool = True,
             import easyocr
             print("        한국어 OCR 모델 받는 중... (약 100MB)")
             easyocr.Reader(["ko", "en"], gpu=False, verbose=False)
-            print("        완료")
+            _note("ocr", True, "완료")
+        except ModuleNotFoundError:
+            _note("ocr", False,
+                  "easyocr 가 설치되지 않았습니다 -> --install 을 먼저 실행하세요")
         except BaseException as e:
-            print(f"        건너뜀 — {type(e).__name__}: {e}")
+            _note("ocr", False, f"실패 - {type(e).__name__}: {e}")
 
     if diarize:
         print("\n  [4/4] 화자 분리 모델")
         if not config.HF_TOKEN:
-            print("        건너뜀 — .env에 HF_TOKEN이 없습니다")
+            _note("diarize", False,
+                  ".env 에 HF_TOKEN 이 없습니다 (없어도 나머지는 동작합니다)")
         else:
             try:
                 from pyannote.audio import Pipeline
                 print("        받는 중... (약 200MB)")
                 Pipeline.from_pretrained(config.DIARIZE_MODEL,
                                          use_auth_token=config.HF_TOKEN)
-                print("        완료")
+                _note("diarize", True, "완료")
+            except ModuleNotFoundError:
+                _note("diarize", False,
+                      "pyannote.audio 가 설치되지 않았습니다 -> --install 을 먼저 실행하세요")
             except BaseException as e:
-                print(f"        실패 — {e}")
+                _note("diarize", False, f"실패 - {e}")
                 print("        huggingface.co/pyannote/speaker-diarization-3.1 에서")
                 print("        이용 약관에 동의하셨는지 확인하세요.")
+
+    return result
+
+
+def _report_models(result: dict) -> None:
+    """받은 결과를 정직하게 알려준다."""
+    got = [k for k, ok in result.items() if ok]
+    missed = [k for k, ok in result.items() if not ok]
+
+    print()
+    if not result:
+        print("  받을 모델이 없었습니다.")
+    elif not got:
+        print(f"  {M['no']} 모델을 하나도 받지 못했습니다.")
+        print()
+        print("     대부분 프로그램이 아직 설치되지 않아서입니다. 먼저 이것을 실행하세요:")
+        print("         python evidence/setup_check.py --install")
+    elif missed:
+        print(f"  {M['ok']} {len(got)}개를 받았습니다. {len(missed)}개는 받지 못했습니다.")
+        print("     받지 못한 기능은 프로그램에서 그 부분만 못 쓰고, 나머지는 동작합니다.")
+    else:
+        print(f"  {M['ok']} 모델 준비가 끝났습니다. 이제 인터넷 없이도 동작합니다.")
 
 
 # ─────────────────────────────────────────────────────────
@@ -332,11 +378,23 @@ def install_all() -> None:
     install_torch()
 
     print("\n  [2/3] 나머지 라이브러리")
-    if REQ.exists():
-        _pip("-r", str(REQ))
-    else:
-        for _, _, pkg, _ in PACKAGES:
-            _pip(pkg, quiet=True)
+    # 요구사항 파일을 먼저 시도하되, 실패하면 목록으로 직접 깐다.
+    # 한국어 윈도우에서 pip 이 요구사항 파일을 cp949 로 읽다 죽는 일이 있었다.
+    # 파일 하나 때문에 설치 전체가 멈추면 안 된다.
+    rc = _pip("-r", str(REQ)) if REQ.exists() else 1
+    if rc != 0:
+        if REQ.exists():
+            print("    요구사항 파일로 설치하지 못했습니다. 하나씩 설치합니다.")
+        pkgs = [pkg for _, _, pkg, _ in PACKAGES]
+        rc = _pip(*pkgs)
+        if rc != 0:
+            print("    한꺼번에 설치하지 못했습니다. 하나씩 다시 시도합니다.")
+            for _, module, pkg, purpose in PACKAGES:
+                ok, _ = _installed(module)
+                if ok:
+                    continue
+                if _pip(pkg) != 0:
+                    print(f"    {M['no']} {pkg} 설치 실패 - {purpose} 기능을 못 씁니다")
 
     print("\n  [3/3] 설정 파일")
     ensure_env()
@@ -375,9 +433,7 @@ def _ask_models() -> None:
 
     if ans in ("y", "ㅛ", "예", "네"):
         ensure_env()
-        download_models()
-        print()
-        print("  모델 준비가 끝났습니다. 이제 인터넷 없이도 동작합니다.")
+        _report_models(download_models())
     else:
         print()
         print("  건너뛰었습니다. 나중에 받으려면:")
@@ -407,8 +463,8 @@ def main():
         install_all()
     elif args.models:
         ensure_env()
-        download_models()
-        print("\n  모델 준비가 끝났습니다. 이제 인터넷 없이도 동작합니다.\n")
+        _report_models(download_models())
+        print()
     elif args.env:
         ensure_env()
     else:

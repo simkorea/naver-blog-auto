@@ -1,45 +1,49 @@
-# ════════════════════════════════════════════════════════════
-#  증거파인더 의존성
-#  설치:  pip install -r evidence/requirements-evidence.txt
+# Evidence Finder dependencies
 #
-#  ※ NVIDIA GPU 사용 시 torch는 CUDA 빌드로 별도 설치할 것:
-#     pip install torch --index-url https://download.pytorch.org/whl/cu124
-#     (먼저 이 명령을 실행한 뒤 아래 requirements를 설치하세요)
-# ════════════════════════════════════════════════════════════
+#   python -m pip install -r evidence/requirements-evidence.txt
+#
+# NOTE: This file is intentionally ASCII-only.
+# pip reads requirement files using the system locale encoding when there is
+# no BOM. On a Korean Windows machine that is cp949, so any UTF-8 comment here
+# crashes pip with UnicodeDecodeError before a single package is installed.
+# Keep every character in this file ASCII.
+#
+# GPU users: install torch first so you get the CUDA build.
+#   python -m pip install torch --index-url https://download.pytorch.org/whl/cu124
+# Or just run:  python evidence/setup_check.py --install
 
-# ── 화면 ──────────────────────────────────────
+# UI
 streamlit>=1.40
 
-# ── 음성 인식 ─────────────────────────────────
+# Speech recognition
 faster-whisper>=1.1.0
 
-# ── 화자 분리 (선택: 없으면 화자 분리만 건너뜀) ──
+# Speaker diarization (optional - skipped if missing)
 pyannote.audio>=3.3.0
 
-# ── 의미 검색 (선택: 없으면 키워드 검색만 동작) ──
+# Semantic search (optional - keyword search still works without it)
 sentence-transformers>=3.0.0
 sqlite-vec>=0.1.6
 
-# ── 문서 텍스트 추출 ───────────────────────────
+# Document text extraction
 pdfplumber>=0.11.0
-# 스캔한 PDF(글자가 그림으로 들어 있는 계약서)를 이미지로 렌더링해 OCR
 pypdfium2>=4.30.0
 python-docx>=1.1.0
 openpyxl>=3.1.0
 
-# ── 이미지 OCR (기존 image_fetcher.py와 공유) ──
+# Image OCR (shared with image_fetcher.py)
 easyocr>=1.7.0
 Pillow>=10.0.0
 
-# ── 오디오 구간 추출 (ffmpeg 바이너리 동봉) ────
+# Audio clip extraction (bundles the ffmpeg binary)
 imageio-ffmpeg>=0.5.1
 
-# ── 법령·판례 조회 ─────────────────────────────
+# Statute and precedent lookup
 requests>=2.31.0
 
-# ── 설정 ──────────────────────────────────────
+# Configuration
 PyYAML>=6.0
 python-dotenv>=1.0.0
 
-# ── 선택적 LLM 태깅 (OFFLINE_ONLY=false 일 때만) ──
+# Optional LLM tagging (only used when OFFLINE_ONLY=false)
 google-generativeai>=0.8.0
