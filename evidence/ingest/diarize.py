@@ -32,6 +32,64 @@ def available() -> tuple[bool, str]:
     return True, ""
 
 
+def _ensure_hf_compat() -> None:
+    """
+    pyannote 3.x 와 huggingface_hub 1.x 사이의 간극을 메운다.
+
+    pyannote.audio 3.x 는 소스 안에 hf_hub_download(use_auth_token=...) 라고
+    박혀 있는데, huggingface_hub 1.0 이 그 인자를 없앴다.
+    그래서 화자 분리가 이렇게 죽는다:
+
+        hf_hub_download() got an unexpected keyword argument 'use_auth_token'
+
+    버전을 낮춰 맞출 수도 없다. sentence-transformers(의미 검색)는
+    huggingface_hub 1.3 이상을 요구해서 서로 배타적이다.
+
+    그래서 받는 쪽에 얇은 껍데기를 씌워 use_auth_token 을 token 으로 옮긴다.
+    없어진 인자를 새 이름으로 넘겨주는 것뿐이라 동작이 달라지지 않는다.
+
+    **pyannote 를 부르기 전에** 실행해야 한다. pyannote 가 import 시점에
+    함수를 자기 이름공간으로 가져가기 때문이다.
+    """
+    try:
+        import huggingface_hub as hub
+    except ImportError:
+        return
+
+    import inspect
+
+    for name in ("hf_hub_download", "snapshot_download"):
+        fn = getattr(hub, name, None)
+        if fn is None or getattr(fn, "_evidence_shim", False):
+            continue
+        try:
+            params = inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            continue
+        if "use_auth_token" in params or "token" not in params:
+            continue          # 아직 옛 인자를 받거나, 손댈 수 없는 형태
+
+        def _wrap(original):
+            def shim(*args, use_auth_token=None, **kwargs):
+                if use_auth_token is not None and kwargs.get("token") is None:
+                    kwargs["token"] = use_auth_token
+                return original(*args, **kwargs)
+            shim._evidence_shim = True
+            shim.__name__ = getattr(original, "__name__", "hf_shim")
+            shim.__doc__ = getattr(original, "__doc__", None)
+            return shim
+
+        setattr(hub, name, _wrap(fn))
+
+        # 이미 가져다 쓴 곳이 있으면 거기도 바꿔준다
+        import sys
+        for mod_name, mod in list(sys.modules.items()):
+            if not mod_name.startswith("pyannote"):
+                continue
+            if getattr(mod, name, None) is fn:
+                setattr(mod, name, getattr(hub, name))
+
+
 def get_pipeline():
     global _pipeline
     if _pipeline is not None:
@@ -40,6 +98,8 @@ def get_pipeline():
     ok, why = available()
     if not ok:
         raise RuntimeError(why)
+
+    _ensure_hf_compat()
 
     from pyannote.audio import Pipeline
     _pipeline = Pipeline.from_pretrained(

@@ -335,8 +335,14 @@ def check_runtime() -> list[tuple[str, bool, str]]:
         out.append(("이미지 글자 읽기", False, f"{type(e).__name__}: {e}"))
 
     try:
+        from evidence.ingest import diarize as _d
+        _d._ensure_hf_compat()                        # 부르기 전에 간극 메우기
         from pyannote.audio import Pipeline           # noqa: F401
-        out.append(("화자 분리", True, "준비됨 (HF_TOKEN 필요)"))
+        note = "준비됨 (HF_TOKEN 필요)"
+        import huggingface_hub as _hub
+        if getattr(getattr(_hub, "hf_hub_download", None), "_evidence_shim", False):
+            note = "준비됨 (버전 차이를 자동으로 메움)"
+        out.append(("화자 분리", True, note))
     except BaseException as e:
         hint = f"{type(e).__name__}: {str(e)[:120]}"
         if "torchcodec" in str(e).lower():
@@ -430,20 +436,59 @@ def download_models(whisper: bool = True, embed: bool = True,
                   ".env 에 HF_TOKEN 이 없습니다 (없어도 나머지는 동작합니다)")
         else:
             try:
-                from pyannote.audio import Pipeline
+                # 화자 분리를 실제로 쓰는 경로와 똑같이 부른다.
+                # 여기서만 따로 호출하면 호환 처리가 빠져 "받을 때는 됐는데
+                # 쓸 때 죽는" 상황이 생긴다.
+                from evidence.ingest import diarize as _diarize
                 print("        받는 중... (약 200MB)")
-                Pipeline.from_pretrained(config.DIARIZE_MODEL,
-                                         use_auth_token=config.HF_TOKEN)
+                _diarize.get_pipeline()
                 _note("diarize", True, "완료")
             except ModuleNotFoundError:
                 _note("diarize", False,
                       "pyannote.audio 가 설치되지 않았습니다 -> --install 을 먼저 실행하세요")
             except BaseException as e:
-                _note("diarize", False, f"실패 - {e}")
-                print("        huggingface.co/pyannote/speaker-diarization-3.1 에서")
-                print("        이용 약관에 동의하셨는지 확인하세요.")
+                _note("diarize", False, f"실패 - {str(e)[:160]}")
+                for line in diarize_failure_hint(e):
+                    print(f"        {line}")
 
     return result
+
+
+def diarize_failure_hint(err: BaseException) -> list[str]:
+    """
+    화자 분리 실패 원인에 맞는 안내를 고른다.
+
+    예전에는 무슨 오류든 "약관에 동의하셨는지 확인하세요" 라고 했다.
+    실제로는 라이브러리 버전 문제였는데, 사용자가 이미 동의해 둔 약관 페이지를
+    다시 찾아가게 만들었다. 원인을 모르겠으면 모르겠다고 하는 편이 낫다.
+    """
+    text = f"{type(err).__name__} {err}".lower()
+
+    if "unexpected keyword argument" in text or isinstance(err, TypeError):
+        return [
+            "라이브러리 버전이 서로 맞지 않습니다 (약관 문제가 아닙니다).",
+            "고치는 방법:",
+            "    python evidence/setup_check.py --repair",
+        ]
+    if any(k in text for k in ("401", "403", "gated", "unauthorized",
+                               "awaiting a review", "access to model")):
+        return [
+            "모델 접근 권한이 없습니다. 아래 **두 곳 모두** 동의해야 합니다:",
+            "    huggingface.co/pyannote/speaker-diarization-3.1",
+            "    huggingface.co/pyannote/segmentation-3.0",
+            "동의 후에도 안 되면 토큰을 다시 발급받아 --token 으로 넣어주세요.",
+        ]
+    if any(k in text for k in ("proxy", "connection", "timeout", "resolve",
+                               "network", "max retries")):
+        return [
+            "인터넷 연결 문제로 보입니다.",
+            "회사망·공용 와이파이는 huggingface.co 를 막는 경우가 있습니다.",
+        ]
+    if "out of memory" in text or "cuda" in text:
+        return ["그래픽카드 메모리가 부족합니다. 다른 프로그램을 닫고 다시 시도하세요."]
+    return [
+        "원인을 특정하지 못했습니다. 위 메시지를 그대로 알려주시면 도움이 됩니다.",
+    ]
 
 
 def _report_models(result: dict) -> None:
