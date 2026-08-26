@@ -35,7 +35,7 @@ REQ = ROOT / "requirements-evidence.txt"
 PACKAGES = [
     ("화면",        "streamlit",             "streamlit>=1.40",              "프로그램 자체"),
     ("음성 인식",    "faster_whisper",        "faster-whisper>=1.1.0",        "녹음 전사"),
-    ("화자 분리",    "pyannote.audio",        "pyannote.audio>=3.3.0",        "누가 말했는지 구분"),
+    ("화자 분리",    "pyannote.audio",        "pyannote.audio>=3.3.0,<4",     "누가 말했는지 구분"),
     ("의미 검색",    "sentence_transformers", "sentence-transformers>=3.0.0", "문장으로 검색"),
     ("벡터 검색",    "sqlite_vec",            "sqlite-vec>=0.1.6",            "문장으로 검색"),
     ("PDF 추출",    "pdfplumber",            "pdfplumber>=0.11.0",           "PDF 문서 읽기"),
@@ -68,17 +68,14 @@ _BLACKWELL = ("rtx 50", "rtx50", "5050", "5060", "5070", "5080", "5090",
 #   torch        모든 것의 토대
 #   torchvision  easyocr 가 요구 -> 이미지·스캔 PDF 글자 읽기
 #   torchaudio   pyannote 가 요구 -> 화자 분리
-#   torchcodec   pyannote 4.x 가 요구 -> 화자 분리
 #
-# 예전에 DLL 오류를 없애려고 torchcodec 을 지웠는데, 원인은 torchcodec
-# 자체가 아니라 torch 와의 버전 불일치였다. 지우면 화자 분리가 통째로
-# 죽는다. 맞춰야지 걷어낼 것이 아니었다.
+# torchcodec 은 여기 없다. pyannote.audio **4.x** 만 이걸 요구하는데,
+# 윈도우용 배포판이 아예 없다(pip 이 "from versions: none" 을 낸다).
+# 게다가 우리가 쓰는 화자 분리 모델 speaker-diarization-3.1 은 원래
+# pyannote.audio 3.x 용이다. 그래서 3.x 로 고정해 이 문제 자체를 없앤다.
+# (requirements-evidence.txt 에 pyannote.audio<4 로 박아두었다)
 TORCH_CORE = ("torch", "torchvision", "torchaudio")
-
-# 없어도 나머지는 동작한다. 설치에 실패하면 그 기능만 못 쓴다고 알린다.
-TORCH_OPTIONAL = ("torchcodec",)
-
-TORCH_PKGS = TORCH_CORE + TORCH_OPTIONAL
+TORCH_PKGS = TORCH_CORE
 
 
 def cuda_index_for(gpu_name: str | None) -> str:
@@ -171,9 +168,7 @@ def install_torch(force: bool = False) -> bool:
             return True
         print("    그래픽카드가 없어 CPU 빌드를 설치합니다")
         print("    (녹음 전사가 느립니다. 1시간 녹음에 20~40분)")
-        ok = _pip(*TORCH_CORE) == 0
-        _pip(*TORCH_OPTIONAL, quiet=True)
-        return ok
+        return _pip(*TORCH_CORE) == 0
 
     index = cuda_index_for(gpu)
     tag = index.rsplit("/", 1)[-1]
@@ -198,19 +193,29 @@ def install_torch(force: bool = False) -> bool:
         index = None
         rc = _pip(*TORCH_CORE)
 
-    if rc != 0:
+    return rc == 0
+
+
+def fix_pyannote_version() -> bool:
+    """
+    화자 분리 패키지를 3.x 로 맞춘다.
+
+    4.x 는 torchcodec 을 요구하는데 윈도우용 배포판이 없어 설치가 통째로
+    실패한다. 우리가 쓰는 모델(speaker-diarization-3.1)도 3.x 용이므로
+    3.x 가 맞는 선택이다.
+    """
+    import importlib.metadata as md
+
+    try:
+        current = md.version("pyannote.audio")
+    except BaseException:
         return False
 
-    # 선택 부품은 실패해도 전체를 멈추지 않는다.
-    # 반드시 핵심과 **같은 저장소**에서 받아야 버전이 맞는다.
-    args = list(TORCH_OPTIONAL)
-    if index:
-        args += ["--index-url", index]
-    if _pip(*args) != 0:
-        print(f"    {M['no']} torchcodec 을 설치하지 못했습니다.")
-        print("       화자 분리(누가 말했는지 구분)만 못 쓰고 나머지는 동작합니다.")
-        print("       화자 분리가 꼭 필요하면 이전 버전을 쓰세요:")
-        print('           python -m pip install "pyannote.audio<4"')
+    major = current.split(".")[0]
+    if major.isdigit() and int(major) >= 4:
+        print(f"    화자 분리 {current} -> 3.x 로 맞춥니다")
+        print("       (4.x 는 윈도우에 없는 부품을 요구합니다)")
+        return _pip("pyannote.audio>=3.3,<4") == 0
     return True
 
 
@@ -279,7 +284,11 @@ def check_runtime() -> list[tuple[str, bool, str]]:
         from pyannote.audio import Pipeline           # noqa: F401
         out.append(("화자 분리", True, "준비됨 (HF_TOKEN 필요)"))
     except BaseException as e:
-        out.append(("화자 분리", False, f"{type(e).__name__}: {e}"))
+        hint = f"{type(e).__name__}: {e}"
+        if "torchcodec" in str(e).lower():
+            hint = ('화자 분리 4.x 가 윈도우에 없는 부품을 찾고 있습니다 -> '
+                    'python -m pip install "pyannote.audio>=3.3,<4"')
+        out.append(("화자 분리", False, hint))
 
     try:
         from sentence_transformers import SentenceTransformer  # noqa: F401
@@ -528,23 +537,26 @@ def install_all() -> None:
     install_torch()
 
     print("\n  [2/4] 나머지 라이브러리")
-    # 요구사항 파일을 먼저 시도하되, 실패하면 목록으로 직접 깐다.
-    # 한국어 윈도우에서 pip 이 요구사항 파일을 cp949 로 읽다 죽는 일이 있었다.
-    # 파일 하나 때문에 설치 전체가 멈추면 안 된다.
+    # 요구사항 파일을 먼저 시도한다. 실패하면 하나씩 깐다.
+    #
+    # 하나씩 까는 것이 중요하다. 한 번에 여러 개를 요청하면 그중 하나만
+    # 없어도 pip 이 전체를 취소한다 — 실제로 torchcodec(윈도우 배포판 없음)
+    # 하나 때문에 torchvision 까지 함께 취소되는 일이 있었다.
+    # 하나가 안 되면 그것만 못 쓰고 나머지는 살아야 한다.
     rc = _pip("-r", str(REQ)) if REQ.exists() else 1
     if rc != 0:
         if REQ.exists():
             print("    요구사항 파일로 설치하지 못했습니다. 하나씩 설치합니다.")
-        pkgs = [pkg for _, _, pkg, _ in PACKAGES]
-        rc = _pip(*pkgs)
-        if rc != 0:
-            print("    한꺼번에 설치하지 못했습니다. 하나씩 다시 시도합니다.")
-            for _, module, pkg, purpose in PACKAGES:
-                ok, _ = _installed(module)
-                if ok:
-                    continue
-                if _pip(pkg) != 0:
-                    print(f"    {M['no']} {pkg} 설치 실패 - {purpose} 기능을 못 씁니다")
+        failed = []
+        for label, module, pkg, purpose in PACKAGES:
+            ok, _ = _installed(module)
+            if ok:
+                continue
+            if _pip(pkg, quiet=True) != 0:
+                failed.append((pkg, purpose))
+                print(f"    {M['no']} {pkg} 설치 실패 - {purpose} 기능을 못 씁니다")
+        if not failed:
+            print("    모두 설치했습니다.")
 
     # ── 여기가 중요하다 ──────────────────────────────
     # 위에서 깐 패키지들(pyannote 등)이 자기 버전 torch 를 끌어오면서
@@ -552,6 +564,7 @@ def install_all() -> None:
     # 전사가 10배 느려지고, 사용자는 원인을 모른다.
     # 그래서 마지막에 다시 확인하고 필요하면 되돌린다.
     print("\n  [3/4] GPU 가속·부품 정합성 확인")
+    fix_pyannote_version()
     gpu = detect_nvidia()
     st = torch_status()
     fam = torch_family_status()
@@ -627,6 +640,7 @@ def repair() -> None:
 
     print("\n  [1/2] torch 계열을 그래픽카드에 맞게 통째로 다시 설치")
     install_torch(force=True)
+    fix_pyannote_version()
 
     print("\n  [2/2] 기능이 실제로 되는지 확인")
     broken = []

@@ -31,7 +31,13 @@ streamlit>=1.40
 faster-whisper>=1.1.0
 
 # Speaker diarization (optional - skipped if missing)
-pyannote.audio>=3.3.0
+#
+# Pinned below 4.0 on purpose. pyannote.audio 4.x requires torchcodec, which
+# has no Windows distribution at all - pip reports "from versions: none" and
+# aborts the whole install, taking unrelated packages down with it.
+# Our diarization model (pyannote/speaker-diarization-3.1) is a 3.x model
+# anyway, so 3.x is the correct pairing.
+pyannote.audio>=3.3.0,<4
 
 # Semantic search (optional - keyword search still works without it)
 sentence-transformers>=3.0.0
