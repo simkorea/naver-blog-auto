@@ -92,6 +92,78 @@ def _ensure_hf_compat() -> None:
                 setattr(mod, name, getattr(hub, name))
 
 
+def _ensure_speechbrain_windows_compat() -> None:
+    """
+    speechbrain 의 지연 임포트 가드가 윈도우에서 작동하지 않는 문제를 고친다.
+
+    speechbrain 은 k2_fsa 같은 무거운 선택적 의존성을 "실제로 쓸 때만" 임포트
+    하려고 LazyModule 이라는 자리표시자를 sys.modules 에 미리 넣어 둔다.
+    문제는 pytorch_lightning 이 체크포인트를 불러올 때 is_scripting 여부를
+    검사하려고 inspect.stack() 으로 현재 호출 스택 전체를 훑는데, 이 과정에서
+    inspect.getmodule() 이 sys.modules 에 있는 "모든" 모듈에 hasattr(m, '__file__')
+    을 걸어 본다. LazyModule 은 이 hasattr 호출조차 "진짜 쓰려는 시도"로 착각해
+    k2_fsa 를 실제로 임포트하려 하고, k2 가 설치돼 있지 않으니 이렇게 죽는다:
+
+        ImportError: Lazy import of LazyModule(...) failed
+
+    speechbrain 자신도 이 상황을 알고 가드를 넣어 뒀다. "호출자가 inspect.py
+    자신이면 (진짜 필요해서가 아니라 스택을 훑다가 걸린 것이므로) 조용히
+    AttributeError 를 던져 hasattr 이 False 로 넘어가게 한다":
+
+        importer_frame.filename.endswith("/inspect.py")
+
+    그런데 윈도우 경로는 역슬래시를 쓴다. `...\\Lib\\inspect.py` 는 저 조건에
+    걸리지 않으므로 가드가 절대 작동하지 않고, 리눅스에서만 통하던 코드가
+    윈도우에서 늘 진짜 임포트를 시도해 실패한다.
+
+    speechbrain 파일을 직접 고칠 수는 없다(재설치하면 사라진다). 그래서 같은
+    검사를 경로 구분자에 안전하게(os.path.basename) 다시 감싼다. 나머지 동작은
+    원본 그대로다.
+    """
+    try:
+        from speechbrain.utils import importutils
+    except ImportError:
+        return
+
+    if getattr(importutils.LazyModule.ensure_module, "_evidence_patched", False):
+        return
+
+    import importlib
+    import inspect
+    import os
+    import sys
+    import warnings
+
+    def patched(self, stacklevel):
+        importer_frame = None
+        try:
+            importer_frame = inspect.getframeinfo(sys._getframe(stacklevel + 1))
+        except AttributeError:
+            warnings.warn(
+                "Failed to inspect frame to check if we should ignore "
+                "importing a module lazily."
+            )
+
+        if importer_frame is not None and os.path.basename(importer_frame.filename) == "inspect.py":
+            raise AttributeError()
+
+        if self.lazy_module is None:
+            try:
+                if self.package is None:
+                    self.lazy_module = importlib.import_module(self.target)
+                else:
+                    self.lazy_module = importlib.import_module(
+                        f".{self.target}", self.package
+                    )
+            except Exception as e:
+                raise ImportError(f"Lazy import of {repr(self)} failed") from e
+
+        return self.lazy_module
+
+    patched._evidence_patched = True
+    importutils.LazyModule.ensure_module = patched
+
+
 @contextlib.contextmanager
 def _allow_full_checkpoint_load():
     """
@@ -149,6 +221,7 @@ def get_pipeline():
         raise RuntimeError(why)
 
     _ensure_hf_compat()
+    _ensure_speechbrain_windows_compat()
 
     from pyannote.audio import Pipeline
 
@@ -183,9 +256,16 @@ def diarize(path, num_speakers: int = None,
         if max_speakers:
             kwargs["max_speakers"] = max_speakers
 
+    # pyannote는 soundfile(libsndfile)로 오디오를 읽는데, m4a 같은 압축 포맷은
+    # libsndfile이 디코딩하지 못한다 ("Format not recognised"). Whisper 전사가
+    # 같은 파일을 문제없이 읽는 것은 ffmpeg로 직접 디코딩하기 때문이고, 로더가
+    # 다르다. 전사용으로 만드는 WAV 사본(ffmpeg 변환, 캐시됨)을 그대로 재사용한다.
+    from . import preprocess
+    audio_path, _ = preprocess.prepare(path, "light")
+
     # 모델을 실제로 돌릴 때 뒤늦게 파일을 더 읽는 경우가 있어 여기도 감싼다
     with _allow_full_checkpoint_load():
-        result = pipe(str(path), **kwargs)
+        result = pipe(str(audio_path), **kwargs)
     turns = []
     for turn, _, speaker in result.itertracks(yield_label=True):
         turns.append({"start": float(turn.start), "end": float(turn.end),
