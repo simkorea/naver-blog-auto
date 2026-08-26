@@ -107,19 +107,30 @@ def _allow_full_checkpoint_load():
     안전 조치를 통째로 끄지 않고 이 한 번의 호출로 범위를 좁혔다.
     불러오는 파일은 사용자가 직접 약관에 동의하고 공식 저장소에서 받은
     pyannote 모델이라 출처가 분명하다.
+
+    **부르는 쪽이 weights_only 를 직접 넘겨도 덮어쓴다.**
+    처음에는 "부르는 쪽이 정했으면 존중한다"로 만들었는데 그래서 안 통했다.
+    pyannote 는 torch.load 를 직접 부르지 않는다. lightning 을 거치는데,
+    lightning 의 cloud_io.py 가 이렇게 부른다:
+
+        torch.load(f, map_location=..., weights_only=weights_only)
+
+    즉 **항상 명시적으로 넘긴다.** 존중하면 아무것도 하지 않는 것과 같다.
+    이 구역 안에서는 우리가 파일 출처를 알고 들어온 것이므로 우리가 정한다.
     """
     import torch
 
     original = torch.load
 
     def patched(*args, **kwargs):
-        if "weights_only" in kwargs:
-            return original(*args, **kwargs)     # 부르는 쪽이 정했으면 존중
+        kwargs["weights_only"] = False
         try:
-            return original(*args, weights_only=False, **kwargs)
-        except TypeError:
-            # 이 인자를 모르는 옛 torch. 그냥 원래대로 부른다.
             return original(*args, **kwargs)
+        except TypeError as e:
+            if "weights_only" not in str(e):
+                raise           # 진짜 다른 문제 — 감추면 안 된다
+            kwargs.pop("weights_only", None)
+            return original(*args, **kwargs)    # 이 인자를 모르는 옛 torch
 
     torch.load = patched
     try:
@@ -172,7 +183,9 @@ def diarize(path, num_speakers: int = None,
         if max_speakers:
             kwargs["max_speakers"] = max_speakers
 
-    result = pipe(str(path), **kwargs)
+    # 모델을 실제로 돌릴 때 뒤늦게 파일을 더 읽는 경우가 있어 여기도 감싼다
+    with _allow_full_checkpoint_load():
+        result = pipe(str(path), **kwargs)
     turns = []
     for turn, _, speaker in result.itertracks(yield_label=True):
         turns.append({"start": float(turn.start), "end": float(turn.end),

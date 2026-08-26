@@ -155,6 +155,78 @@ def run(tmp_path) -> bool:
     c.ok(p2.exists(), "빈 상태에서도 CSV가 만들어진다")
     empty_conn.close()
 
+    # ── 화자 분리 체크포인트 읽기 ────────────────────────────
+    # 실제로 두 번 터진 자리다. 첫 수정이 안 통한 이유는 lightning 이
+    # weights_only 를 **명시적으로** 넘기는데 그걸 존중했기 때문이다.
+    # 그래서 여기서는 lightning 의 실제 호출 방식을 그대로 흉내 낸다.
+    from evidence.ingest.diarize import _allow_full_checkpoint_load
+
+    import sys as _sys
+    import types as _types
+
+    calls = []
+
+    def _record(*args, **kwargs):
+        calls.append(kwargs.get("weights_only", "(인자 없음)"))
+        return "checkpoint"
+
+    fake = _types.SimpleNamespace(load=_record)
+    saved = _sys.modules.get("torch")
+    _sys.modules["torch"] = fake
+    try:
+        with _allow_full_checkpoint_load():
+            # lightning/fabric/utilities/cloud_io.py 가 부르는 방식 그대로
+            fake.load("model.ckpt", map_location="cpu", weights_only=True)
+            fake.load("model.ckpt")          # 아무것도 안 넘기는 경우
+        fake.load("model.ckpt")              # 구역을 벗어난 뒤
+
+        c.eq(calls[0], False,
+             "lightning 이 weights_only=True 를 넘겨도 덮어쓴다")
+        c.eq(calls[1], False,
+             "인자를 안 넘겨도 weights_only=False 로 부른다")
+        c.eq(calls[2], "(인자 없음)",
+             "구역을 벗어나면 원래 torch.load 로 되돌아간다")
+
+        # 구역 안에서 예외가 나도 되돌려야 한다
+        try:
+            with _allow_full_checkpoint_load():
+                raise RuntimeError("모델 파일 손상")
+        except RuntimeError:
+            pass
+        fake.load("model.ckpt")
+        c.eq(calls[3], "(인자 없음)", "예외가 나도 원래대로 되돌린다")
+
+        # weights_only 를 모르는 옛 torch 흉내
+        def _old_load(*args, **kwargs):
+            if "weights_only" in kwargs:
+                raise TypeError("load() got an unexpected keyword "
+                                "argument 'weights_only'")
+            return "ok"
+
+        _sys.modules["torch"] = _types.SimpleNamespace(load=_old_load)
+        with _allow_full_checkpoint_load():
+            import torch as _t
+            c.eq(_t.load("m.ckpt"), "ok", "옛 torch 에서도 죽지 않는다")
+
+        # 관계없는 TypeError 는 감추면 안 된다
+        def _broken_load(*args, **kwargs):
+            raise TypeError("expected str, got int")
+
+        _sys.modules["torch"] = _types.SimpleNamespace(load=_broken_load)
+        raised = False
+        try:
+            with _allow_full_checkpoint_load():
+                import torch as _t2
+                _t2.load(123)
+        except TypeError:
+            raised = True
+        c.ok(raised, "관계없는 TypeError 는 그대로 올려보낸다")
+    finally:
+        if saved is not None:
+            _sys.modules["torch"] = saved
+        else:
+            _sys.modules.pop("torch", None)
+
     conn.close()
     return c.report()
 
