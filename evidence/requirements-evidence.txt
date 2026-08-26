@@ -23,6 +23,13 @@
 # If something already went wrong:
 #
 #     python evidence/setup_check.py --repair
+#
+# The helper pins a verified combination:
+#     torch 2.8.0 / torchvision 0.23.0 / torchaudio 2.8.0
+#
+# Do NOT just install "latest". torchaudio 2.9 removed AudioMetaData and
+# info(), which pyannote.audio 3.x calls - speaker diarization then dies with
+# an AttributeError while everything still looks installed.
 
 # UI
 streamlit>=1.40

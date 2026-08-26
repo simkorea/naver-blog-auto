@@ -77,6 +77,48 @@ _BLACKWELL = ("rtx 50", "rtx50", "5050", "5060", "5070", "5080", "5090",
 TORCH_CORE = ("torch", "torchvision", "torchaudio")
 TORCH_PKGS = TORCH_CORE
 
+# 검증된 조합으로 고정한다. "최신"을 쓰면 안 되는 이유:
+#   torchaudio 2.9 부터 AudioMetaData 와 info() 를 걷어냈는데,
+#   pyannote.audio 3.x 가 바로 그것들을 쓴다. 최신을 깔면 화자 분리가
+#   "AttributeError" 로 죽는다. 설치는 성공한 것처럼 보여서 더 헷갈린다.
+#
+# 2.8.0 을 고른 이유:
+#   · torchaudio 에 아직 그 함수들이 있다 (pyannote 3.x 동작)
+#   · cu128 빌드가 있다 (RTX 50 시리즈 지원)
+#   · torchvision 0.23.0 과 짝이 맞는다 (easyocr 동작)
+TORCH_PINS = {
+    "torch": "2.8.0",
+    "torchvision": "0.23.0",
+    "torchaudio": "2.8.0",
+}
+
+
+def _pinned(pkgs) -> list[str]:
+    """고정 버전을 붙인 설치 인자."""
+    return [f"{p}=={TORCH_PINS[p]}" if p in TORCH_PINS else p for p in pkgs]
+
+
+def pyannote_compatible() -> tuple[bool, str]:
+    """
+    화자 분리가 실제로 돌아갈 수 있는 조합인지 본다.
+
+    설치 목록만 봐서는 알 수 없다. 둘 다 설치되어 있는데 서로 안 맞는
+    경우가 있고, 그게 지금 문제다.
+    """
+    try:
+        import torchaudio
+    except BaseException:
+        return False, "torchaudio 가 없습니다"
+
+    missing = [n for n in ("AudioMetaData", "info") if not hasattr(torchaudio, n)]
+    if missing:
+        return False, (
+            f"torchaudio {getattr(torchaudio, '__version__', '?')} 에서 "
+            f"{', '.join(missing)} 가 사라졌습니다. 화자 분리(pyannote 3.x)가 "
+            f"이것을 씁니다."
+        )
+    return True, ""
+
 
 def cuda_index_for(gpu_name: str | None) -> str:
     """카드 이름을 보고 맞는 CUDA 빌드를 고른다."""
@@ -168,7 +210,7 @@ def install_torch(force: bool = False) -> bool:
             return True
         print("    그래픽카드가 없어 CPU 빌드를 설치합니다")
         print("    (녹음 전사가 느립니다. 1시간 녹음에 20~40분)")
-        return _pip(*TORCH_CORE) == 0
+        return _pip(*_pinned(TORCH_CORE)) == 0
 
     index = cuda_index_for(gpu)
     tag = index.rsplit("/", 1)[-1]
@@ -183,15 +225,19 @@ def install_torch(force: bool = False) -> bool:
     _pip("uninstall", "-y", *TORCH_PKGS)
 
     print(f"    {tag} 빌드를 설치합니다 (2GB 내외, 몇 분 걸립니다)")
-    rc = _pip(*TORCH_CORE, "--index-url", index)
+    args = _pinned(TORCH_CORE)
+    rc = _pip(*args, "--index-url", index)
     if rc != 0 and index != CUDA_INDEX_DEFAULT:
         print(f"    {tag} 설치 실패 -> 기본 CUDA 빌드로 시도합니다")
         index = CUDA_INDEX_DEFAULT
+        rc = _pip(*args, "--index-url", index)
+    if rc != 0:
+        # 고정 버전이 이 환경에 없을 수도 있다. 버전 없이 한 번 더.
+        print("    고정 버전 설치 실패 -> 버전 지정 없이 시도합니다")
         rc = _pip(*TORCH_CORE, "--index-url", index)
     if rc != 0:
         print("    CUDA 빌드 실패 -> CPU 빌드로 시도합니다")
-        index = None
-        rc = _pip(*TORCH_CORE)
+        rc = _pip(*_pinned(TORCH_CORE))
 
     return rc == 0
 
@@ -255,7 +301,15 @@ def torch_family_status() -> dict:
 
 def _family_broken() -> bool:
     fam = torch_family_status()
-    return bool(fam["mismatched"]) if fam["found"] else False
+    if fam["found"] and fam["mismatched"]:
+        return True
+    # 버전은 서로 맞는데 화자 분리와 안 맞는 경우도 고쳐야 한다
+    try:
+        import pyannote.audio          # noqa: F401
+    except BaseException:
+        return False
+    ok, _ = pyannote_compatible()
+    return not ok
 
 
 def check_runtime() -> list[tuple[str, bool, str]]:
@@ -284,10 +338,14 @@ def check_runtime() -> list[tuple[str, bool, str]]:
         from pyannote.audio import Pipeline           # noqa: F401
         out.append(("화자 분리", True, "준비됨 (HF_TOKEN 필요)"))
     except BaseException as e:
-        hint = f"{type(e).__name__}: {e}"
+        hint = f"{type(e).__name__}: {str(e)[:120]}"
         if "torchcodec" in str(e).lower():
             hint = ('화자 분리 4.x 가 윈도우에 없는 부품을 찾고 있습니다 -> '
                     'python -m pip install "pyannote.audio>=3.3,<4"')
+        else:
+            compat_ok, why = pyannote_compatible()
+            if not compat_ok:
+                hint = f"{why} -> python evidence/setup_check.py --repair"
         out.append(("화자 분리", False, hint))
 
     try:
@@ -500,14 +558,17 @@ def report() -> list:
         print("           -> python evidence/setup_check.py --repair 로 고칠 수 있습니다")
 
     print(M["line"] * 68)
-    missing = []
+    missing, broken = [], []
     for label, module, pkg, purpose in PACKAGES:
         ok, why = _installed(module)
-        mark = M["ok"] if ok else M["no"]
-        note = "" if ok else f"-> {purpose} 불가"
-        print(f"  {mark} {label:11s} {why if not ok else '설치됨':16s} {note}")
-        if not ok:
-            missing.append((label, pkg, purpose))
+        if ok:
+            print(f"  {M['ok']} {label:11s} 설치됨")
+            continue
+        print(f"  {M['no']} {label:11s} -> {purpose} 불가")
+        print(f"       {why}")
+        # 깔려는 있는데 못 불러오는 것과, 아예 없는 것은 조치가 다르다.
+        (broken if not why.startswith("미설치") else missing).append(
+            (label, pkg, purpose))
 
     ff = shutil.which("ffmpeg")
     try:
@@ -519,12 +580,18 @@ def report() -> list:
 
     print(M["line"] * 68)
     if missing:
-        print(f"  빠진 것 {len(missing)}개 — 아래 명령으로 설치하세요:")
+        print(f"  빠진 것 {len(missing)}개 - 아래 명령으로 설치하세요:")
         print("      python evidence/setup_check.py --install")
-    else:
+    if broken:
+        # 깔려는 있는데 못 불러오는 것. 다시 까는 것으로는 안 고쳐진다.
+        # 대개 다른 패키지와 버전이 어긋난 것이라 --repair 가 맞다.
+        print(f"  깔려 있는데 못 쓰는 것 {len(broken)}개 "
+              f"({', '.join(b[0] for b in broken)})")
+        print("      python evidence/setup_check.py --repair")
+    if not missing and not broken:
         print(f"  {M['ok']} 필요한 것이 모두 설치되어 있습니다")
     print(M["dline"] * 68 + "\n")
-    return missing
+    return missing + broken
 
 
 def install_all() -> None:
