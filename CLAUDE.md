@@ -33,8 +33,8 @@ python tests/run_all.py                 회귀 164항목
 마지막으로 확인된 것: 사용자 PC에서 `--go` 로 전 모델(음성 인식·의미 검색·OCR·
 화자 분리) 받기 완료. 화자 분리는 `Weights only load failed` 를 고친 뒤에도
 실제 GPU·실제 오디오 파일에서만 나오는 문제가 두 개 더 있었다 (speechbrain
-`k2_fsa` ImportError, m4a 디코딩 문제 — 위 지뢰 표 참고). 둘 다 고쳤고,
-`--selftest` 9/9 · `tests/run_all.py` 로 확인한다.
+`k2_fsa` ImportError, m4a 디코딩 문제 — 위 지뢰 표 참고). 둘 다 고쳤고
+사용자 PC에서 `--selftest` 9/9 · `tests/run_all.py` 164/164 통과로 확인됐다.
 
 확인된 성능: RTX 5060 Laptop + large-v3 로 20초 녹음을 9.1초에 전사.
 1시간 녹음이면 약 27분.
