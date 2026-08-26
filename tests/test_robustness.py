@@ -227,6 +227,69 @@ def run(tmp_path) -> bool:
         else:
             _sys.modules.pop("torch", None)
 
+    # ── speechbrain 의 깨진 지연 로딩 껍데기 ──────────────────
+    # 실제로 터진 자리다. 화자 분리와 무관한 모듈(k2, 윈도우 배포판 없음)
+    # 때문에 죽었다. 파이썬 표준 inspect.getmodule() 이 sys.modules 를
+    # 훑으며 모든 모듈에 hasattr(m, "__file__") 를 하는 것이 방아쇠였다.
+    from evidence.ingest import diarize as _dz
+
+    def _inspect_style_scan():
+        """inspect.getmodule() 의 sys.modules 순회 구간을 그대로 흉내 낸다."""
+        import inspect as _ins
+        for _, module in _sys.modules.copy().items():
+            if _ins.ismodule(module) and hasattr(module, "__file__"):
+                pass
+
+    try:
+        from speechbrain.utils.importutils import LazyModule
+    except BaseException:
+        LazyModule = None
+
+    if LazyModule is None:
+        # speechbrain 이 없는 환경에서도 죽지 않아야 한다
+        _dz._speechbrain_checked = False
+        _dz._defuse_speechbrain_redirects()
+        c.ok(True, "speechbrain 이 없어도 조용히 넘어간다")
+    else:
+        class _BrokenLazy(LazyModule):
+            """불러오려 하면 죽는 껍데기 — k2_fsa 와 같은 상황."""
+            def __getattr__(self, name):
+                raise ImportError("Lazy import of LazyModule(...) failed")
+
+        broken = "speechbrain.__evidence_test_broken"
+        _sys.modules[broken] = _BrokenLazy(broken, "nowhere.at.all", None)
+        try:
+            blew_up = False
+            try:
+                _inspect_style_scan()
+            except ImportError:
+                blew_up = True
+            c.ok(blew_up, "깨진 껍데기가 있으면 실제로 터진다 (재현)")
+
+            _dz._speechbrain_checked = False
+            _dz._defuse_speechbrain_redirects()
+
+            survived = True
+            try:
+                _inspect_style_scan()
+            except BaseException:
+                survived = False
+            c.ok(survived, "껍데기를 무해하게 바꾸면 터지지 않는다")
+            c.ok(not isinstance(_sys.modules.get(broken), LazyModule),
+                 "깨진 껍데기는 빈 모듈로 교체된다")
+            # 안 고쳐졌으면 이 hasattr 자체가 터진다. 터지는 것도 실패로 센다.
+            try:
+                no_file = hasattr(_sys.modules.get(broken), "__file__") is False
+            except BaseException:
+                no_file = False
+            c.ok(no_file, "빈 모듈은 __file__ 이 없어 inspect 가 건너뛴다")
+            # 멀쩡한 것까지 없애면 안 된다
+            import speechbrain.inference as _sbi
+            c.ok(hasattr(_sbi, "EncoderClassifier"),
+                 "멀쩡한 speechbrain 기능은 그대로 남는다")
+        finally:
+            _sys.modules.pop(broken, None)
+
     conn.close()
     return c.report()
 

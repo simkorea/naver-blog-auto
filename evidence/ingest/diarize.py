@@ -92,78 +92,6 @@ def _ensure_hf_compat() -> None:
                 setattr(mod, name, getattr(hub, name))
 
 
-def _ensure_speechbrain_windows_compat() -> None:
-    """
-    speechbrain 의 지연 임포트 가드가 윈도우에서 작동하지 않는 문제를 고친다.
-
-    speechbrain 은 k2_fsa 같은 무거운 선택적 의존성을 "실제로 쓸 때만" 임포트
-    하려고 LazyModule 이라는 자리표시자를 sys.modules 에 미리 넣어 둔다.
-    문제는 pytorch_lightning 이 체크포인트를 불러올 때 is_scripting 여부를
-    검사하려고 inspect.stack() 으로 현재 호출 스택 전체를 훑는데, 이 과정에서
-    inspect.getmodule() 이 sys.modules 에 있는 "모든" 모듈에 hasattr(m, '__file__')
-    을 걸어 본다. LazyModule 은 이 hasattr 호출조차 "진짜 쓰려는 시도"로 착각해
-    k2_fsa 를 실제로 임포트하려 하고, k2 가 설치돼 있지 않으니 이렇게 죽는다:
-
-        ImportError: Lazy import of LazyModule(...) failed
-
-    speechbrain 자신도 이 상황을 알고 가드를 넣어 뒀다. "호출자가 inspect.py
-    자신이면 (진짜 필요해서가 아니라 스택을 훑다가 걸린 것이므로) 조용히
-    AttributeError 를 던져 hasattr 이 False 로 넘어가게 한다":
-
-        importer_frame.filename.endswith("/inspect.py")
-
-    그런데 윈도우 경로는 역슬래시를 쓴다. `...\\Lib\\inspect.py` 는 저 조건에
-    걸리지 않으므로 가드가 절대 작동하지 않고, 리눅스에서만 통하던 코드가
-    윈도우에서 늘 진짜 임포트를 시도해 실패한다.
-
-    speechbrain 파일을 직접 고칠 수는 없다(재설치하면 사라진다). 그래서 같은
-    검사를 경로 구분자에 안전하게(os.path.basename) 다시 감싼다. 나머지 동작은
-    원본 그대로다.
-    """
-    try:
-        from speechbrain.utils import importutils
-    except ImportError:
-        return
-
-    if getattr(importutils.LazyModule.ensure_module, "_evidence_patched", False):
-        return
-
-    import importlib
-    import inspect
-    import os
-    import sys
-    import warnings
-
-    def patched(self, stacklevel):
-        importer_frame = None
-        try:
-            importer_frame = inspect.getframeinfo(sys._getframe(stacklevel + 1))
-        except AttributeError:
-            warnings.warn(
-                "Failed to inspect frame to check if we should ignore "
-                "importing a module lazily."
-            )
-
-        if importer_frame is not None and os.path.basename(importer_frame.filename) == "inspect.py":
-            raise AttributeError()
-
-        if self.lazy_module is None:
-            try:
-                if self.package is None:
-                    self.lazy_module = importlib.import_module(self.target)
-                else:
-                    self.lazy_module = importlib.import_module(
-                        f".{self.target}", self.package
-                    )
-            except Exception as e:
-                raise ImportError(f"Lazy import of {repr(self)} failed") from e
-
-        return self.lazy_module
-
-    patched._evidence_patched = True
-    importutils.LazyModule.ensure_module = patched
-
-
 @contextlib.contextmanager
 def _allow_full_checkpoint_load():
     """
@@ -211,6 +139,70 @@ def _allow_full_checkpoint_load():
         torch.load = original      # 반드시 되돌린다
 
 
+_speechbrain_checked = False
+
+
+def _defuse_speechbrain_redirects() -> None:
+    """
+    speechbrain 이 등록해 둔 "깨진 지연 로딩 껍데기"를 무해한 것으로 바꾼다.
+
+    무슨 일이 일어나는가
+      speechbrain 을 불러오면 옛 경로들이 sys.modules 에 껍데기로 등록된다.
+
+          sys.modules["speechbrain.k2_integration"]
+              -> speechbrain.integrations.k2_fsa 를 나중에 불러올 껍데기
+
+      껍데기는 **속성을 하나라도 건드리면** 그때 진짜 모듈을 불러온다.
+      그런데 k2_fsa 는 맨 앞에서 `import k2` 를 하고, k2 는 윈도우용
+      배포판이 없다(torchcodec 과 같은 상황). 그래서 터진다.
+
+      문제는 우리가 그 모듈을 쓰지도 않는데 터진다는 것이다.
+      파이썬 표준 inspect.getmodule() 이 sys.modules 를 통째로 훑으면서
+      모든 모듈에 hasattr(m, "__file__") 를 하기 때문이다(inspect.py 의
+      "Update the filename to module name cache" 구간). hasattr 은
+      AttributeError 만 삼키므로 ImportError 는 그대로 올라온다.
+
+      실제로 재현했다:
+          hasattr(sys.modules["speechbrain.k2_integration"], "__file__")
+          -> ImportError: Lazy import of LazyModule(...k2_fsa...) failed
+
+    무엇을 하는가
+      껍데기를 하나씩 건드려 본다. 멀쩡히 불러와지는 것은 그대로 둔다.
+      불러오다 죽는 것만 **속이 빈 평범한 모듈**로 갈아끼운다.
+      속이 빈 모듈은 __file__ 이 없으므로 inspect 의 순회가 그냥 건너뛴다.
+
+      없앤 것이 아니라, 어차피 못 쓰던 것을 조용히 못 쓰게 바꾼 것뿐이다.
+      k2 가 안 깔린 PC 에서는 처음부터 쓸 수 없던 기능이다.
+    """
+    global _speechbrain_checked
+    if _speechbrain_checked:
+        return
+    _speechbrain_checked = True
+
+    try:
+        import speechbrain            # noqa: F401  (껍데기 등록을 일으킨다)
+        from speechbrain.utils.importutils import LazyModule
+    except BaseException:
+        return                        # speechbrain 이 없으면 할 일도 없다
+
+    import sys
+    import types
+
+    for name, mod in list(sys.modules.items()):
+        if not isinstance(mod, LazyModule):
+            continue
+        try:
+            hasattr(mod, "__file__")   # 여기서 진짜 로딩이 일어난다
+        except BaseException:
+            stub = types.ModuleType(name)
+            stub.__doc__ = (
+                f"{name} 은(는) 이 PC 에서 쓸 수 없어 비워 두었습니다. "
+                "화자 분리와는 무관한 모듈입니다."
+            )
+            stub._evidence_stub = True
+            sys.modules[name] = stub
+
+
 def get_pipeline():
     global _pipeline
     if _pipeline is not None:
@@ -221,7 +213,7 @@ def get_pipeline():
         raise RuntimeError(why)
 
     _ensure_hf_compat()
-    _ensure_speechbrain_windows_compat()
+    _defuse_speechbrain_redirects()
 
     from pyannote.audio import Pipeline
 
@@ -262,6 +254,9 @@ def diarize(path, num_speakers: int = None,
     # 다르다. 전사용으로 만드는 WAV 사본(ffmpeg 변환, 캐시됨)을 그대로 재사용한다.
     from . import preprocess
     audio_path, _ = preprocess.prepare(path, "light")
+
+    # 모델을 돌리는 도중에 inspect.getmodule() 이 불릴 수 있다. 한 번 더 확인.
+    _defuse_speechbrain_redirects()
 
     # 모델을 실제로 돌릴 때 뒤늦게 파일을 더 읽는 경우가 있어 여기도 감싼다
     with _allow_full_checkpoint_load():
