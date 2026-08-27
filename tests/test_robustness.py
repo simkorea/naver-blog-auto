@@ -247,7 +247,6 @@ def run(tmp_path) -> bool:
 
     if LazyModule is None:
         # speechbrain 이 없는 환경에서도 죽지 않아야 한다
-        _dz._speechbrain_checked = False
         _dz._defuse_speechbrain_redirects()
         c.ok(True, "speechbrain 이 없어도 조용히 넘어간다")
     else:
@@ -256,8 +255,10 @@ def run(tmp_path) -> bool:
             def __getattr__(self, name):
                 raise ImportError("Lazy import of LazyModule(...) failed")
 
+        # target 을 실제 선택적 의존성 묶음으로 둔다 — 그 접두사만 손대기 때문
         broken = "speechbrain.__evidence_test_broken"
-        _sys.modules[broken] = _BrokenLazy(broken, "nowhere.at.all", None)
+        _sys.modules[broken] = _BrokenLazy(
+            broken, "speechbrain.integrations.__evidence_test", None)
         try:
             blew_up = False
             try:
@@ -266,7 +267,7 @@ def run(tmp_path) -> bool:
                 blew_up = True
             c.ok(blew_up, "깨진 껍데기가 있으면 실제로 터진다 (재현)")
 
-            _dz._speechbrain_checked = False
+            _dz._probed.discard(broken)
             _dz._defuse_speechbrain_redirects()
 
             survived = True
@@ -287,6 +288,21 @@ def run(tmp_path) -> bool:
             import speechbrain.inference as _sbi
             c.ok(hasattr(_sbi, "EncoderClassifier"),
                  "멀쩡한 speechbrain 기능은 그대로 남는다")
+            # 선택적 의존성이 아닌 껍데기는 건드리지도 않는다 (불러오면 느리다)
+            keep = "speechbrain.__evidence_test_keep"
+
+            class _Tripwire(LazyModule):
+                def __getattr__(self, name):
+                    raise AssertionError("건드리지 말았어야 할 껍데기를 건드렸다")
+
+            _sys.modules[keep] = _Tripwire(keep, "speechbrain.inference", None)
+            try:
+                _dz._probed.discard(keep)
+                _dz._defuse_speechbrain_redirects()
+                c.ok(isinstance(_sys.modules[keep], LazyModule),
+                     "선택적 의존성이 아닌 껍데기는 불러오지 않고 그대로 둔다")
+            finally:
+                _sys.modules.pop(keep, None)
         finally:
             _sys.modules.pop(broken, None)
 

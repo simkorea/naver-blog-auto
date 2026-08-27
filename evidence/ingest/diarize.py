@@ -139,7 +139,11 @@ def _allow_full_checkpoint_load():
         torch.load = original      # 반드시 되돌린다
 
 
-_speechbrain_checked = False
+# 선택적 의존성(k2, spacy, flair ...)을 요구하는 묶음. 우리는 쓰지 않는다.
+_OPTIONAL_PREFIX = "speechbrain.integrations."
+
+# 이미 확인한 껍데기 이름. 같은 것을 두 번 불러오지 않기 위해서다.
+_probed: set[str] = set()
 
 
 def _defuse_speechbrain_redirects() -> None:
@@ -173,12 +177,28 @@ def _defuse_speechbrain_redirects() -> None:
 
       없앤 것이 아니라, 어차피 못 쓰던 것을 조용히 못 쓰게 바꾼 것뿐이다.
       k2 가 안 깔린 PC 에서는 처음부터 쓸 수 없던 기능이다.
-    """
-    global _speechbrain_checked
-    if _speechbrain_checked:
-        return
-    _speechbrain_checked = True
 
+    건드릴 대상을 좁힌다
+      껍데기를 **전부** 건드려 보게 만들었더니 2분이 넘게 걸렸다.
+      멀쩡한 껍데기까지 진짜로 불러오면서 무거운 라이브러리를 다 끌어왔다.
+      화자 분리를 파일마다 부르는데 그 값을 매번 치를 수는 없다.
+
+      깨지는 것은 전부 `speechbrain.integrations.*` 를 가리키는 것들이다.
+      선택적 의존성(k2, spacy, flair 등)을 요구하는 묶음이고, 우리는 쓰지 않는다.
+      정작 필요한 `speechbrain.pretrained -> speechbrain.inference` 는 여기
+      해당하지 않으므로 건드리지 않는다.
+
+    한 번만 하고 끝내면 안 된다
+      껍데기는 speechbrain 의 하위 묶음을 불러올 때마다 새로 등록된다.
+      처음에 한 번 훑고 마는 구조로 만들었더니 나중에 등록된 것이 그대로
+      남았다. 그래서 부를 때마다 다시 훑되, 이미 확인한 이름은 건너뛴다.
+
+    윈도우에서는 더 잘 터진다
+      speechbrain 도 이 상황을 알고 "부른 쪽이 inspect.py 면 조용히 넘긴다"는
+      가드를 넣어 뒀는데, 그 검사가 `endswith("/inspect.py")` 라서
+      역슬래시를 쓰는 윈도우에서는 절대 걸리지 않는다. 즉 윈도우에서는
+      가드가 없는 것과 같다. 그래서 이 함수가 윈도우에서 특히 중요하다.
+    """
     try:
         import speechbrain            # noqa: F401  (껍데기 등록을 일으킨다)
         from speechbrain.utils.importutils import LazyModule
@@ -189,8 +209,12 @@ def _defuse_speechbrain_redirects() -> None:
     import types
 
     for name, mod in list(sys.modules.items()):
-        if not isinstance(mod, LazyModule):
+        if name in _probed or not isinstance(mod, LazyModule):
             continue
+        target = str(getattr(mod, "target", "") or "")
+        if not target.startswith(_OPTIONAL_PREFIX):
+            continue                  # 멀쩡한 것까지 억지로 불러오지 않는다
+        _probed.add(name)
         try:
             hasattr(mod, "__file__")   # 여기서 진짜 로딩이 일어난다
         except BaseException:
