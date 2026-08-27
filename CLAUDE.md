@@ -27,7 +27,7 @@
 ```
 python evidence/setup_check.py          현재 상태 확인
 python evidence/setup_check.py --go     남은 준비 (모델 받기 + 자체 점검 3분)
-python tests/run_all.py                 회귀 164항목
+python tests/run_all.py                 회귀 191항목 (묶음 6개)
 ```
 
 마지막으로 확인된 것: 사용자 PC에서 `--go` 로 전 모델(음성 인식·의미 검색·OCR·
@@ -80,7 +80,7 @@ python tests/run_all.py                 회귀 164항목
 실패하지 않으면 그 검증은 아무것도 지키지 못한다.
 
 ```
-python tests/run_all.py     # 커밋 전 항상. 164항목.
+python tests/run_all.py     # 커밋 전 항상. 191항목.
 ```
 
 이 컨테이너 밖에서만 확인 가능한 것: Whisper 한국어 품질, pyannote 정확도,
@@ -104,7 +104,8 @@ python tests/run_all.py     # 커밋 전 항상. 164항목.
 대부분 확인할 수 있다(ffmpeg 로 만든 시험용 오디오 사용).
 순서대로 하나씩, 끝날 때마다 사용자에게 보고한다.
 
-1. 오디오 형식 매트릭스 (m4a·amr·3ga·mp3·ogg…) ← 가장 급함
+1. ~~오디오 형식 매트릭스~~ — 분류·변환은 웹에서 확인 완료
+   (`.3ga`·`.opus` 누락 결함을 찾아 고침). **실제 모델 전사·화자분리만 남음**
 2. 법제처 API 실제 조회 — 통째로 미검증
 3. 긴 녹음(60분)과 중단·재개
 4. 대량 처리 (100개)

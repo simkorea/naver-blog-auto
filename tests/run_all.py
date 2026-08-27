@@ -25,6 +25,8 @@ _console_setup()
 M = marks()
 
 SUITES = [
+    ("오디오 형식", "test_audio_formats",
+     "휴대폰 녹음 형식 12종을 실제로 만들어 분류·변환 확인"),
     ("음성 파이프라인", "test_audio_pipeline",
      "전사 처리 · 신뢰도 · 환청 탐지 · 교차 검증 · 화자 매칭"),
     ("검색 · 법률", "test_search_and_law",

@@ -198,8 +198,20 @@ def whisper_options() -> dict:
 # ─────────────────────────────────────────────────────────
 # 파일 종류 판별
 # ─────────────────────────────────────────────────────────
-AUDIO_EXT = {".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg", ".wma", ".amr", ".3gp"}
-VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".wmv"}
+# 통화 녹음은 기기·앱마다 확장자가 제각각이다. 여기 없는 확장자는
+# 스캔에서 **건너뛴다.** 정작 필요한 녹음이 빠지면 그것을 알 방법이 없으므로
+# 실제로 쓰이는 것을 넉넉히 넣어 둔다. ffmpeg 로 열리는지는 따로 검증한다
+# (tests/test_audio_formats.py 가 형식마다 실제로 만들어 넣어 본다).
+#
+#   .3ga   삼성 통화 녹음 (한국에서 가장 흔한 것 중 하나)
+#   .opus  카카오톡 음성메시지 · 텔레그램
+#   .amr   구형 안드로이드 통화 녹음
+#   .caf   아이폰 음성 메모
+AUDIO_EXT = {
+    ".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg", ".wma", ".amr",
+    ".3gp", ".3ga", ".opus", ".oga", ".aif", ".aiff", ".caf", ".m4b",
+}
+VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".webm", ".3g2", ".m4v"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 DOC_EXT = {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".hwp", ".hwpx", ".txt", ".md", ".eml", ".rtf"}
 
