@@ -1090,9 +1090,14 @@ def main():
                     help="가짜 사건으로 전 과정을 한 번 돌려본다")
     ap.add_argument("--go", action="store_true",
                     help="남은 준비를 한 번에 (모델 받기 + 자체 점검)")
+    ap.add_argument("--shortcut", action="store_true",
+                    help="바탕화면 바로가기 만들기 (윈도우)")
     args = ap.parse_args()
 
-    if args.go:
+    if args.shortcut:
+        from evidence.make_shortcuts import main as make_shortcuts
+        raise SystemExit(make_shortcuts())
+    elif args.go:
         raise SystemExit(finish_setup())
     elif args.selftest:
         from evidence.selftest import run as run_selftest

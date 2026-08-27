@@ -34,6 +34,43 @@ from .scanner import MIN_BYTES, SKIP_DIRS, SKIP_NAMES
 MAX_SCAN = 200_000
 
 
+def phone_folder_hint(path) -> str | None:
+    """
+    휴대폰을 USB 로 꽂았을 때 보이는 경로인지 알아보고, 맞으면 안내를 돌려준다.
+
+    왜 필요한가
+      폰을 꽂으면 탐색기에 이렇게 보인다:
+
+          내 PC\\한의 Z Flip5\\내장 저장공간\\Call
+
+      사람 눈에는 폴더처럼 보이지만 **진짜 폴더가 아니다.** 윈도우가
+      탐색기 안에서만 보여주는 가상 경로(MTP)라서 프로그램은 열 수 없다.
+      드라이브 문자(`C:`)가 없는 것이 그 표시다.
+
+      그냥 "폴더를 찾을 수 없습니다"라고만 하면 사용자는 경로를 잘못 썼나
+      싶어 계속 고쳐 넣게 된다. 실제로 그 일이 있었다. 무엇을 해야 하는지
+      정확히 알려준다.
+    """
+    s = str(path).strip().strip('"')
+    if not s:
+        return None
+    # 드라이브 문자(C:\)나 네트워크 경로(\\서버\)로 시작하면 진짜 경로다
+    if re.match(r"^[A-Za-z]:[\\/]", s) or s.startswith("\\\\") or s.startswith("/"):
+        return None
+    lowered = s.lower()
+    markers = ("내 pc", "this pc", "내장 저장공간", "internal storage",
+               "phone", "sd card", "휴대전화", "갤럭시", "galaxy")
+    if not any(m in lowered for m in markers):
+        return None
+    return (
+        "휴대폰을 USB로 연결했을 때 보이는 경로 같습니다. "
+        "이런 경로는 윈도우 탐색기 안에서만 보이는 가상 경로라 프로그램이 열 수 없습니다.\n\n"
+        "**먼저 PC로 복사해 주세요.** 탐색기에서 그 폴더(예: `Call`)를 통째로 "
+        "바탕화면에 끌어다 놓으신 뒤, 여기에는 복사된 위치"
+        "(예: `C:\\\\Users\\\\사용자\\\\Desktop\\\\Call`)를 넣으시면 됩니다."
+    )
+
+
 def normalize_phone(text: str) -> str:
     """전화번호에서 숫자만 남긴다. 010-1234-5678 → 01012345678"""
     return re.sub(r"\D", "", text or "")
@@ -109,6 +146,10 @@ def find(roots, terms: list[str], kinds: list[str] = None,
     stopped = False
 
     for root in roots:
+        hint = phone_folder_hint(root)
+        if hint:
+            errors.append(f"**{root}**\n\n{hint}")
+            continue
         root = Path(root).expanduser()
         if not root.exists():
             errors.append(f"폴더를 찾을 수 없습니다: {root}")

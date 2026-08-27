@@ -120,6 +120,56 @@ def run(tmp_path) -> bool:
     c.ok(saved2.exists() and saved2.read_bytes() == "ZZZ완전히다른녹음".encode(),
          "새 이름으로 나란히 저장한다", out2["copied"][0]["saved_as"])
 
+    # ── 휴대폰 경로 알아보기 ──────────────────────
+    # 폰을 USB 로 꽂으면 탐색기에 폴더처럼 보이지만 진짜 경로가 아니다.
+    # "폴더를 찾을 수 없습니다"라고만 하면 사용자는 경로를 잘못 썼나 싶어
+    # 계속 고쳐 넣게 된다. 실제로 그 일이 있었다.
+    phone_paths = [
+        chr(92).join(["내 PC", "한의 Z Flip5", "내장 저장공간", "Call"]),
+        chr(92).join(["This PC", "Galaxy S24", "Internal storage", "Recordings"]),
+    ]
+    for pp in phone_paths:
+        hint = collector.phone_folder_hint(pp)
+        c.ok(hint and "PC로 복사" in hint,
+             f"휴대폰 경로를 알아보고 무엇을 해야 하는지 알려준다 ({pp[:20]}...)")
+
+    real_paths = [
+        "C:" + chr(92) + "Users" + chr(92) + "sims" + chr(92) + "Desktop" + chr(92) + "Call",
+        chr(92) * 2 + "서버" + chr(92) + "공유" + chr(92) + "녹음",
+        str(src),
+    ]
+    for rp in real_paths:
+        c.ok(collector.phone_folder_hint(rp) is None,
+             f"진짜 폴더 경로는 휴대폰 경로로 오해하지 않는다 ({rp[:24]}...)")
+
+    phone_res = collector.find([phone_paths[0], src], ["홍길동"])
+    c.ok(any("PC로 복사" in e for e in phone_res["errors"]),
+         "휴대폰 경로를 넣으면 안내가 나온다")
+    c.ok(phone_res["hits"], "휴대폰 경로가 섞여 있어도 나머지 폴더는 훑는다")
+
+    # ── 실제 통화 녹음 파일명으로 ──────────────────
+    # 사용자 폰에 실제로 들어 있던 이름들이다.
+    real_names = [
+        "통화 녹음 (주)리치빔_211010_173523.m4a",
+        "통화 녹음 [후후위키] 강남구청_211111_132629.m4a",
+        "통화 녹음 010-4522-9729_210907_170315.m4a",
+        "통화 녹음 " + chr(183) + " 유진_211030_181043.m4a",
+        "통화 녹음 김애숙_220120_152320.m4a",
+    ]
+    c.ok(collector.match_terms(real_names[2], ["010-4522-9729"]),
+         "실제 파일명에서 번호로 찾는다")
+    c.ok(collector.match_terms(real_names[2], ["01045229729"]),
+         "하이픈 없이 넣어도 찾는다")
+    c.ok(collector.match_terms(real_names[4], ["김애숙"]),
+         "실제 파일명에서 이름으로 찾는다")
+    c.ok(collector.match_terms(real_names[0], ["리치빔"]),
+         "상호 일부로도 찾는다")
+    c.ok(not collector.match_terms(real_names[1], ["김애숙"]),
+         "관계없는 녹음은 안 걸린다")
+    # 파일명 뒤의 날짜·시각 숫자가 번호로 오인되면 안 된다
+    c.ok(not collector.match_terms(real_names[4], ["01011112222"]),
+         "날짜·시각 숫자를 전화번호로 잘못 읽지 않는다")
+
     # ── 험한 입력 ───────────────────────────────
     c.eq(collector.find([src], [])["hits"], [], "검색어가 없으면 아무것도 안 찾는다")
     c.eq(collector.find([src], ["   "])["hits"], [], "공백만 있어도 마찬가지")
