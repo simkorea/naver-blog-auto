@@ -27,7 +27,7 @@
 ```
 python evidence/setup_check.py          현재 상태 확인
 python evidence/setup_check.py --go     남은 준비 (모델 받기 + 자체 점검 3분)
-python tests/run_all.py                 회귀 191항목 (묶음 6개)
+python tests/run_all.py                 회귀 261항목 (묶음 7개)
 ```
 
 마지막으로 확인된 것: 사용자 PC에서 `--go` 로 전 모델(음성 인식·의미 검색·OCR·
@@ -80,7 +80,7 @@ python tests/run_all.py                 회귀 191항목 (묶음 6개)
 실패하지 않으면 그 검증은 아무것도 지키지 못한다.
 
 ```
-python tests/run_all.py     # 커밋 전 항상. 191항목.
+python tests/run_all.py     # 커밋 전 항상. 261항목.
 ```
 
 이 컨테이너 밖에서만 확인 가능한 것: Whisper 한국어 품질, pyannote 정확도,

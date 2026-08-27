@@ -180,6 +180,58 @@ def run(tmp_path) -> bool:
         [{"path": str(tmp_path / "사라진파일.m4a"), "size": 1}], dest)
     c.eq(len(unreadable["failed"]), 1, "없는 파일은 실패로 알려주고 죽지 않는다")
 
+    # ── 한 번에 지정하기 ─────────────────────────
+    # 53건을 하나씩 열어 고르고 저장하게 만들었던 것이 실제 결함이었다.
+    from evidence import db
+    from evidence.ingest import scanner
+
+    conn = db.init()
+    reg = tmp_path / "등록용"
+    reg.mkdir()
+    for i in range(5):
+        (reg / f"통화 녹음 김애숙_24030{i}_1200.m4a").write_bytes(f"AUDIO{i}".encode())
+    for i in range(3):
+        (reg / f"통화 녹음 박대표_24040{i}_1200.m4a").write_bytes(f"OTHER{i}".encode())
+    scanner.scan(conn, reg)
+
+    all_rows = scanner.list_sources(conn)
+    c.eq(len(all_rows), 8, "8건이 등록된다")
+    c.eq(len(scanner.pick_sources(conn, legal="UNKNOWN")), 8,
+         "처음에는 전부 '아직 확인 안 함'이다")
+
+    only = scanner.pick_sources(conn, legal="UNKNOWN", name_has="김애숙")
+    c.eq(len(only), 5, "파일명으로 좁혀서 고를 수 있다")
+    c.eq(len(scanner.pick_sources(conn, legal="UNKNOWN", name_has="김 애 숙")), 5,
+         "띄어쓰기가 달라도 같게 본다")
+
+    n = scanner.bulk_update(conn, [r["id"] for r in only],
+                            is_my_conversation="Y", counterparty="김애숙")
+    c.eq(n, 5, "한 번에 5건을 지정한다")
+    c.eq(len(scanner.pick_sources(conn, legal="UNKNOWN")), 3,
+         "지정한 것은 미확인에서 빠진다")
+
+    done = scanner.pick_sources(conn, legal="Y")
+    c.eq(len(done), 5, "지정한 5건이 '예'로 남는다")
+    c.ok(all(r["counterparty"] == "김애숙" for r in done),
+         "상대방도 함께 들어간다")
+    # 나머지는 건드리지 않았어야 한다
+    rest = scanner.pick_sources(conn, legal="UNKNOWN")
+    c.ok(all((r["counterparty"] or "") == "" for r in rest),
+         "대상이 아닌 건은 건드리지 않는다")
+
+    # 빈 값은 덮어쓰지 않는다 — 상대방만 바꾸려는데 적법성까지 바뀌면 안 된다
+    scanner.bulk_update(conn, [rest[0]["id"]], counterparty="박대표",
+                        is_my_conversation=None)
+    again = [r for r in scanner.list_sources(conn) if r["id"] == rest[0]["id"]][0]
+    c.eq(again["counterparty"], "박대표", "상대방만 바꾼다")
+    c.eq(again["is_my_conversation"], "UNKNOWN", "넘기지 않은 값은 그대로 둔다")
+
+    c.eq(scanner.bulk_update(conn, [], is_my_conversation="Y"), 0,
+         "대상이 없으면 아무 일도 하지 않는다")
+    c.eq(scanner.bulk_update(conn, [r["id"] for r in done]), 0,
+         "바꿀 값이 없으면 아무 일도 하지 않는다")
+    conn.close()
+
     return c.report()
 
 

@@ -113,8 +113,8 @@ def _source_table(conn):
             f"**녹음 {len(audio_unknown)}건의 적법성이 미확인 상태입니다.**\n\n"
             "본인이 참여한 대화의 녹음은 적법하게 증거로 쓸 수 있지만, "
             "제3자 간 대화를 몰래 녹음한 것은 통신비밀보호법 위반이 되어 "
-            "증거능력이 부정되고 처벌 대상이 됩니다. "
-            "아래에서 각 녹음을 확인해 지정하세요."
+            "증거능력이 부정되고 처벌 대상이 됩니다.\n\n"
+            "**아래 [한 번에 지정하기]로 한 번에 처리하세요.** 하나씩 열 필요 없습니다."
         )
 
     kinds = sorted({r["kind"] for r in rows})
@@ -126,6 +126,95 @@ def _source_table(conn):
         format_func=lambda k: "전체" if k == "전체" else label.get(k, k),
     )
     shown = [r for r in rows if pick == "전체" or r["kind"] == pick]
+
+    _bulk_panel(conn, pick if pick != "전체" else None)
+    _overview_table(shown)
+
+    with st.expander(f"한 건씩 고치기 ({len(shown)}건)", expanded=False):
+        st.caption(
+            "위에서 일괄로 지정하고, 예외인 것만 여기서 고치시면 됩니다."
+        )
+        _one_by_one(conn, shown, label)
+
+
+def _bulk_panel(conn, kind):
+    """
+    한 번에 지정한다.
+
+    통화 녹음은 수십·수백 건이 한꺼번에 들어온다. 그것을 하나씩 열어
+    고르고 저장하게 하면 빨리 하려고 만든 도구가 오히려 일을 만든다.
+    실제로 53건 앞에서 그 일이 났다.
+    """
+    st.markdown("##### 한 번에 지정하기")
+
+    c1, c2, c3 = st.columns([1.3, 1, 1])
+    target = c1.radio(
+        "대상", ["아직 확인 안 한 것만", "전체"], horizontal=True,
+        key="bulk_target",
+        help="'아직 확인 안 한 것만'이 안전합니다. 이미 지정한 것을 덮지 않습니다.",
+    )
+    name_has = c2.text_input(
+        "파일명에 이 글자가 든 것만", key="bulk_name",
+        placeholder="예) 김애숙", help="비워두면 대상 전체입니다.",
+    )
+
+    legal = None if target == "전체" else "UNKNOWN"
+    picked = scanner.pick_sources(conn, kind=kind, legal=legal,
+                                  name_has=name_has)
+    c3.metric("고를 대상", f"{len(picked)}건")
+
+    d1, d2 = st.columns([1.4, 1])
+    new_legal = d1.selectbox(
+        "내가 참여한 대화인가?",
+        ["(바꾸지 않음)"] + list(LEGAL_OPTIONS),
+        format_func=lambda k: k if k.startswith("(") else LEGAL_OPTIONS[k],
+        key="bulk_legal",
+    )
+    new_party = d2.text_input("상대방", key="bulk_party",
+                              placeholder="비우면 바꾸지 않음")
+
+    if new_legal == "Y":
+        st.caption(
+            "⚠ **본인이 직접 통화한 녹음만** '예'로 지정하세요. "
+            "제3자 간 대화를 몰래 녹음한 것이 섞이면 증거능력이 부정되고 "
+            "처벌 대상이 됩니다. 폰의 '통화 녹음' 폴더에 있는 것은 대개 "
+            "본인 통화이지만, 회의·현장 녹음이 섞여 있다면 골라내세요."
+        )
+
+    disabled = not picked or (new_legal.startswith("(") and not new_party.strip())
+    if st.button(f"{len(picked)}건에 한 번에 적용", type="primary",
+                 disabled=disabled, key="bulk_apply"):
+        fields = {}
+        if not new_legal.startswith("("):
+            fields["is_my_conversation"] = new_legal
+        if new_party.strip():
+            fields["counterparty"] = new_party.strip()
+        n = scanner.bulk_update(conn, [r["id"] for r in picked], **fields)
+        st.success(f"{n}건을 한 번에 지정했습니다.")
+        st.rerun()
+
+    st.divider()
+
+
+def _overview_table(rows):
+    """전체를 한눈에. 53개를 하나씩 펼쳐 보게 하지 않는다."""
+    mark = {"Y": "✅ 내 통화", "N": "🚫 제3자 (제출 제외)",
+            "UNKNOWN": "⚠ 미확인", "NA": "—"}
+    st.dataframe(
+        [{"파일": Path(r["path"]).name,
+          "종류": r["kind"],
+          "길이": (f"{int(r['duration_sec']) // 60}분 {int(r['duration_sec']) % 60}초"
+                   if r["duration_sec"] else ""),
+          "발생 일시": (r["occurred_at"] or "")[:16].replace("T", " "),
+          "적법성": mark.get(r["is_my_conversation"] or "UNKNOWN", ""),
+          "상대방": r["counterparty"] or "",
+          "상태": r["status"]}
+         for r in rows],
+        use_container_width=True, hide_index=True, height=360,
+    )
+
+
+def _one_by_one(conn, shown, label):
 
     for r in shown:
         name = Path(r["path"]).name

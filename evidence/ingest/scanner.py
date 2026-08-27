@@ -232,3 +232,43 @@ def update_source(conn, source_id: int, **fields) -> None:
     args.append(source_id)
     db.write(conn, f"UPDATE sources SET {', '.join(sets)} WHERE id = ?", args)
     integrity.log("source_updated", source_id=source_id, **fields)
+
+
+def pick_sources(conn, kind=None, legal=None, name_has: str = None) -> list:
+    """
+    일괄 처리할 대상을 고른다.
+
+    kind      종류 (audio 등). None 이면 전부
+    legal     지금 적법성 값 ('UNKNOWN' 등). None 이면 전부
+    name_has  파일명에 이 글자가 들어간 것만. 공백은 무시하고 비교한다
+    """
+    rows = [r for r in list_sources(conn, kind=kind)
+            if legal is None or (r["is_my_conversation"] or "UNKNOWN") == legal]
+    if name_has and name_has.strip():
+        needle = re.sub(r"\s+", "", name_has).lower()
+        rows = [r for r in rows
+                if needle in re.sub(r"\s+", "", Path(r["path"]).name).lower()]
+    return rows
+
+
+def bulk_update(conn, source_ids: list[int], **fields) -> int:
+    """
+    여러 건을 한 번에 고친다. 고친 건수를 돌려준다.
+
+    왜 필요한가
+      통화 녹음은 한 번에 수십·수백 건이 들어온다. 그 하나하나를 열어
+      "내가 참여한 대화인가?"를 고르고 저장을 누르게 하면, 빨리 하려고
+      만든 도구가 오히려 일을 만든다. 실제로 53건 앞에서 그 일이 났다.
+
+      값이 빈 항목은 건드리지 않는다 — 상대방만 바꾸려는데 일시까지
+      덮이면 안 된다.
+    """
+    fields = {k: v for k, v in fields.items() if v is not None}
+    if not source_ids or not fields:
+        return 0
+    n = 0
+    for sid in source_ids:
+        update_source(conn, sid, **fields)
+        n += 1
+    integrity.log("sources_bulk_updated", count=n, **fields)
+    return n
