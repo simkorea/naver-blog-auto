@@ -13,7 +13,7 @@ from pathlib import Path
 import streamlit as st
 
 from evidence import config, db, integrity
-from evidence.ingest import scanner
+from evidence.ingest import collector, scanner
 
 LEGAL_OPTIONS = {
     "Y": "예 — 내가 대화에 참여했음",
@@ -29,6 +29,9 @@ def render(conn):
         "증거 폴더를 지정하면 파일을 훑어 종류를 나누고, 각 파일의 SHA-256 해시를 "
         "기록합니다. 원본은 읽기만 하며 수정·이동하지 않습니다."
     )
+
+    _collect_section()
+    st.divider()
 
     with st.form("scan_form"):
         c1, c2 = st.columns([3, 1])
@@ -192,3 +195,120 @@ def _source_table(conn):
                     "제3자 간 대화로 표시되어 있습니다. 이 자료는 검색 결과와 "
                     "제출 패키지에서 자동으로 제외됩니다."
                 )
+
+
+# ─────────────────────────────────────────────────────────
+# 흩어진 파일 모으기
+# ─────────────────────────────────────────────────────────
+def _collect_section():
+    """
+    이름·전화번호로 파일을 찾아 한곳에 복사한다.
+
+    왜 화면 맨 위에 두는가
+      통화 녹음은 다운로드 폴더 여기저기에 흩어져 있다. 수백 개 중에서
+      손으로 골라내는 것은 몇 시간짜리 일이고, 무엇보다 **빠뜨리기 쉽다.**
+      그래서 폴더를 지정하기 전에 먼저 모으는 단계를 둔다.
+    """
+    with st.expander("📥 흩어진 파일 모으기 — 이름·전화번호로 찾아서 한곳에",
+                     expanded=False):
+        st.caption(
+            "다운로드 폴더 등에 흩어진 녹음·문서를 상대방 이름이나 전화번호로 "
+            "찾아 한 폴더에 **복사**합니다. 원본은 있던 자리에 그대로 둡니다."
+        )
+
+        terms_raw = st.text_input(
+            "찾을 이름 · 전화번호",
+            placeholder="예)  홍길동, 010-1234-5678, 길동부동산",
+            help="쉼표로 여러 개를 넣을 수 있습니다. "
+                 "번호는 하이픈이 있든 없든 같은 번호로 봅니다.",
+            key="col_terms",
+        )
+
+        default_roots = [str(p) for p in collector.default_roots()]
+        roots_raw = st.text_area(
+            "찾아볼 폴더 (한 줄에 하나)",
+            value="\n".join(default_roots),
+            height=90,
+            help="하위 폴더까지 모두 훑습니다. 폴더가 크면 시간이 걸립니다.",
+            key="col_roots",
+        )
+
+        c1, c2, c3 = st.columns([1.2, 1, 1.4])
+        only_audio = c1.checkbox("녹음만", value=False, key="col_audio")
+        days = c2.number_input("최근 며칠", min_value=0, max_value=3650, value=0,
+                               help="0이면 기간 제한 없음", key="col_days")
+        dest = c3.text_input("저장할 폴더",
+                             value=str(Path.home() / "Desktop" / "소송자료"),
+                             key="col_dest")
+
+        if st.button("찾아보기", key="col_find"):
+            terms = [t.strip() for t in terms_raw.replace("\n", ",").split(",")]
+            roots = [r.strip() for r in roots_raw.splitlines() if r.strip()]
+            if not [t for t in terms if t]:
+                st.error("찾을 이름이나 전화번호를 입력하세요.")
+            elif not roots:
+                st.error("찾아볼 폴더를 하나 이상 넣으세요.")
+            else:
+                with st.spinner("훑는 중입니다..."):
+                    res = collector.find(
+                        roots, terms,
+                        kinds=[config.KIND_AUDIO] if only_audio else None,
+                        days=int(days) or None,
+                    )
+                st.session_state["col_result"] = res
+
+        res = st.session_state.get("col_result")
+        if not res:
+            return
+
+        for err in res["errors"]:
+            st.warning(err)
+        if res["stopped"]:
+            st.warning(
+                f"파일이 너무 많아 {collector.MAX_SCAN:,}개까지만 훑었습니다. "
+                "폴더를 좁혀서 다시 해보세요."
+            )
+
+        hits = res["hits"]
+        if not hits:
+            st.info(f"{res['scanned']:,}개를 훑었지만 걸리는 파일이 없습니다. "
+                    "이름 철자나 번호를 확인해 보세요.")
+            return
+
+        st.success(f"{res['scanned']:,}개 중 **{len(hits)}개**를 찾았습니다.")
+
+        borrowed = [h for h in hits if h["by_folder"]]
+        if borrowed:
+            st.caption(
+                f"이 중 {len(borrowed)}개는 파일 이름이 아니라 **폴더 이름**에 "
+                "걸린 것입니다. 관계없는 파일이 딸려왔을 수 있으니 확인하세요."
+            )
+
+        st.dataframe(
+            [{"파일": h["name"],
+              "종류": h["kind"],
+              "크기": f"{h['size'] / 1024 / 1024:.1f}MB",
+              "날짜": h["mtime"],
+              "걸린 이유": ("폴더명: " if h["by_folder"] else "") + ", ".join(h["matched"]),
+              "위치": str(Path(h["path"]).parent)}
+             for h in hits],
+            use_container_width=True, hide_index=True,
+        )
+
+        if st.button(f"{len(hits)}개를 저장 폴더로 복사", type="primary",
+                     key="col_copy"):
+            if not dest.strip():
+                st.error("저장할 폴더를 입력하세요.")
+                return
+            with st.spinner("복사 중입니다..."):
+                out = collector.collect(hits, dest.strip())
+            st.success(f"**{len(out['copied'])}개**를 복사했습니다 → `{out['dest']}`")
+            if out["duplicate"]:
+                st.info(f"{len(out['duplicate'])}개는 이미 같은 파일이 있어 건너뛰었습니다.")
+            if out["failed"]:
+                st.error(f"{len(out['failed'])}개는 복사하지 못했습니다.")
+                st.dataframe(out["failed"], use_container_width=True, hide_index=True)
+            st.caption(
+                "원본은 있던 자리에 그대로 있습니다. "
+                "이제 아래에서 이 폴더를 지정해 스캔하세요."
+            )

@@ -25,6 +25,8 @@ _console_setup()
 M = marks()
 
 SUITES = [
+    ("자료 모으기", "test_collector",
+     "이름·전화번호로 찾아 복사 · 원본 보존 · 덮어쓰기 방지"),
     ("오디오 형식", "test_audio_formats",
      "휴대폰 녹음 형식 12종을 실제로 만들어 분류·변환 확인"),
     ("음성 파이프라인", "test_audio_pipeline",
