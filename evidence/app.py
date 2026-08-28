@@ -2,7 +2,7 @@
 """
 증거파인더 — 화면.
 
-    streamlit run evidence/app.py
+    streamlit run evidence/app.py            # http://localhost:8532
 
 탭 구성
   1 자료 등록    폴더 스캔 · 해시 봉인 · 적법성 플래그
@@ -31,6 +31,30 @@ from evidence.ui import (tab_register, tab_analyze, tab_speakers, tab_search,
 st.set_page_config(page_title="증거파인더", page_icon="🔎", layout="wide")
 
 
+# 증거파인더 전용 포트. `.streamlit/config.toml` 과 실행 스크립트가 같은 값을
+# 쓴다 (tests/test_collector.py 가 어긋나면 잡아낸다).
+#
+# 왜 기본값 8501 을 안 쓰나
+#   네이버 블로그 자동화의 대시보드도 Streamlit 이고, 둘 다 포트를 정하지
+#   않으면 기본값 8501 로 겹친다. 증거파인더가 먼저 8501 을 차지하자 블로그
+#   프로그램이 "대시보드가 이미 실행 중"으로 오판하고 브라우저만 열어
+#   증거파인더 화면을 보여줬다. 먼저 쓰던 쪽(블로그)에 8501 을 돌려준다.
+PORT = 8532
+
+
+def app_url() -> str:
+    """지금 이 화면의 주소. 실제로 뜬 포트를 우선 본다."""
+    try:
+        from streamlit.web.server.server import Server      # noqa: F401
+    except BaseException:
+        pass
+    try:
+        port = int(st.get_option("server.port") or PORT)
+    except BaseException:
+        port = PORT
+    return f"http://localhost:{port}"
+
+
 @st.cache_resource
 def get_conn():
     return db.init()
@@ -40,6 +64,10 @@ def sidebar(conn):
     with st.sidebar:
         st.markdown("### 🔎 증거파인더")
         st.caption("녹음·문서·대화를 한곳에서 찾습니다")
+        # 어느 주소에서 도는지 보여준다.
+        # 네이버 블로그 대시보드도 Streamlit 이라 포트가 겹치면 서로를
+        # 상대의 화면으로 착각한다. 실제로 그 일이 있었다.
+        st.caption(f"이 화면 · {app_url()}")
 
         s = db.stats(conn)
         c1, c2 = st.columns(2)

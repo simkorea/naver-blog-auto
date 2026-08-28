@@ -163,10 +163,10 @@ python evidence/setup_check.py
 `실행.bat` 을 더블클릭하거나:
 
 ```
-streamlit run evidence/app.py
+streamlit run evidence/app.py --server.port 8532
 ```
 
-브라우저가 자동으로 열립니다. 열리지 않으면 http://localhost:8501 로 접속하세요.
+브라우저가 자동으로 열립니다. 열리지 않으면 http://localhost:8532 로 접속하세요.
 
 ---
 

@@ -306,6 +306,49 @@ def run(tmp_path) -> bool:
         finally:
             _sys.modules.pop(broken, None)
 
+    # ── 화면 포트가 여기저기서 어긋나지 않는가 ──────
+    # 네이버 블로그 대시보드도 Streamlit 이라 기본 포트 8501 이 겹쳤다.
+    # 블로그 프로그램이 "대시보드가 이미 실행 중"으로 오판하고 브라우저만
+    # 열어 증거파인더 화면을 보여줬다. 포트를 갈라 두었는데, 값이 여러
+    # 곳에 흩어져 있으므로 한 곳만 고치고 빠뜨리면 다시 같은 일이 난다.
+    repo = Path(__file__).resolve().parent.parent
+    from evidence.app import PORT as APP_PORT
+    from evidence import make_shortcuts as _ms
+
+    want = str(APP_PORT)
+    cfg = (repo / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+    c.ok(f"port = {want}" in cfg, "설정 파일이 같은 포트를 가리킨다", want)
+
+    bat = (repo / "evidence" / "실행.bat").read_text(encoding="utf-8",
+                                                     errors="ignore")
+    c.ok(f"--server.port {want}" in bat, "실행.bat 이 같은 포트를 가리킨다")
+
+    run_arg = _ms.shortcut_specs(repo)[0]["arguments"]
+    c.ok(f"--server.port {want}" in run_arg,
+         "바탕화면 바로가기가 같은 포트를 가리킨다")
+
+    # 8501 로 되돌아간 곳이 없어야 한다.
+    # 왜 이 파일들이 8501 을 쓰면 안 되는지 **설명하는 주석**은 그대로
+    # 두어야 하므로, 주석을 걷어낸 실제 코드에서만 찾는다.
+    def _code_only(text: str) -> str:
+        out = []
+        for line in text.splitlines():
+            stripped = line.lstrip()
+            if stripped.startswith(("#", "rem ", "REM ", "::")):
+                continue
+            out.append(line.split("#", 1)[0])
+        return "\n".join(out)
+
+    strays = [f.name for f in (repo / ".streamlit" / "config.toml",
+                               repo / "evidence" / "실행.bat",
+                               repo / "evidence" / "app.py",
+                               repo / "evidence" / "make_shortcuts.py",
+                               repo / "evidence" / "setup_check.py")
+              if "8501" in _code_only(f.read_text(encoding="utf-8",
+                                                  errors="ignore"))]
+    c.ok(not strays, "블로그 대시보드 포트(8501)로 되돌아간 곳이 없다",
+         f"{strays or '없음'}")
+
     conn.close()
     return c.report()
 

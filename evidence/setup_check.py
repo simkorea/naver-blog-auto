@@ -793,7 +793,7 @@ def install_all() -> None:
         print("    1) AI 모델 미리 받기 (권장):")
         print("         python evidence/setup_check.py --models")
         print("    2) 실행:")
-        print("         python -m streamlit run evidence/app.py")
+        print("         python -m streamlit run evidence/app.py --server.port 8532")
         print()
 
 

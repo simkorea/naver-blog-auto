@@ -380,7 +380,7 @@ class SelfTest:
             print(f"  {M['ok']} 전 과정이 통과했습니다. 실제 자료를 넣으셔도 됩니다.")
             print()
             print("  다음 단계")
-            print("      python -m streamlit run evidence/app.py")
+            print("      python -m streamlit run evidence/app.py --server.port 8532")
             print()
             print("  처음에는 녹음 1~2개만 넣어 전사 품질을 확인하세요.")
             print("  [분석 실행] 탭의 '사건 고유명사 사전'에 사람 이름·상호를 넣으면")

@@ -6,7 +6,7 @@ cd /d "%~dp0.."
 where python > nul 2>&1
 if errorlevel 1 goto nopython
 
-python -m streamlit run evidence\app.py
+python -m streamlit run evidence\app.py --server.port 8532
 pause
 exit /b 0
 

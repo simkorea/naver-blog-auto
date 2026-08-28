@@ -80,7 +80,7 @@ def shortcut_specs(root: Path = None, python: str = None) -> list[dict]:
             "name": "증거파인더 실행",
             "target": "powershell.exe",
             # -NoExit: 창이 닫히면 프로그램도 꺼지므로 열어 둔다.
-            "arguments": f'-NoExit -Command "& \'{py}\' -m streamlit run evidence/app.py"',
+            "arguments": f'-NoExit -Command "& \'{py}\' -m streamlit run evidence/app.py --server.port 8532"',
             "workdir": str(root),
             "description": "증거파인더 화면을 엽니다. 이 창을 닫으면 프로그램도 꺼집니다.",
         },
