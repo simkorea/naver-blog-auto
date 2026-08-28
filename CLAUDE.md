@@ -27,7 +27,8 @@
 ```
 python evidence/setup_check.py          현재 상태 확인
 python evidence/setup_check.py --go     남은 준비 (모델 받기 + 자체 점검 3분)
-python tests/run_all.py                 회귀 264항목 (묶음 7개)
+python evidence/transcribe.py           녹음 전사 (명령창 · 밤샘용)
+python tests/run_all.py                 회귀 276항목 (묶음 7개)
 ```
 
 마지막으로 확인된 것: 사용자 PC에서 `--go` 로 전 모델(음성 인식·의미 검색·OCR·
@@ -68,6 +69,7 @@ python tests/run_all.py                 회귀 264항목 (묶음 7개)
 | 화자 분리가 `Lazy import of LazyModule(...k2_fsa...) failed` 로 죽음 | speechbrain 이 k2_fsa 같은 무거운 선택 의존성을 지연 껍데기로 `sys.modules` 에 등록해 둔다. pytorch_lightning 이 체크포인트 로딩 중 `inspect.stack()` 으로 스택을 훑으며 모든 모듈에 `hasattr(m,'__file__')` 을 걸어 이 껍데기까지 건드린다. speechbrain 자신도 "호출자가 inspect.py면 무시" 가드를 넣어 뒀지만 `endswith("/inspect.py")` 로 검사해 윈도우(역슬래시 경로)에서는 전혀 작동하지 않는다 → `k2`(윈도우 배포판 없음)를 실제로 임포트하려다 터짐 | `diarize._defuse_speechbrain_redirects()` — 깨진 껍데기만 미리 찾아 빈 모듈로 교체 |
 | 화자 분리가 `LibsndfileError: Format not recognised` (m4a) 로 죽음 | pyannote 는 soundfile(libsndfile)로 읽어 m4a 를 못 엶. Whisper 는 ffmpeg 로 직접 디코딩해서 같은 파일도 성공함 — 로더가 다름 | `diarize.diarize()` 가 전사용 WAV 사본(`preprocess.prepare`)을 재사용하도록 수정 |
 | 새 ZIP 받으면 인증키·DB 사라짐 | 윈도우가 `... (2)`, `(3)` 새 폴더에 품 | 자료를 `~/EvidenceFinder` 로 분리 (`config._data_path`) |
+| 전사가 멈춘 줄 알고 다시 눌러 "처음부터" 로 보임 | 실제로는 끝난 것을 건너뛰고 남은 것만 하고 있었다(`[1/27]` = 남은 27건 중 1번째). 진짜 결함은 (1) 파일 안 진행률 콜백이 `pipeline`→`audio` 로 전달되지 않아 긴 녹음에서 화면이 안 움직임 (2) "이미 N건 끝남"을 안 보여줌 | `pipeline.run(file_progress=...)` 로 배선 연결, 화면에 막대 두 개 + 남은 시간, `pipeline.already_done()` 표시 |
 | 블로그 대시보드를 열었는데 증거파인더가 뜸 | 둘 다 Streamlit 이고 포트를 안 정해 기본값 8501 이 겹침. 증거파인더가 먼저 차지하자 블로그 launcher 가 "대시보드가 이미 실행 중"으로 오판하고 브라우저만 엶. **섞인 것은 없고 화면만 잘못 열린 것** | 증거파인더를 8532 로 고정 (`.streamlit/config.toml` · 실행 인자 · `app.PORT`). 8501 은 먼저 쓰던 블로그에 돌려줌 |
 
 ## 검증 규칙
@@ -81,7 +83,7 @@ python tests/run_all.py                 회귀 264항목 (묶음 7개)
 실패하지 않으면 그 검증은 아무것도 지키지 못한다.
 
 ```
-python tests/run_all.py     # 커밋 전 항상. 264항목.
+python tests/run_all.py     # 커밋 전 항상. 276항목.
 ```
 
 이 컨테이너 밖에서만 확인 가능한 것: Whisper 한국어 품질, pyannote 정확도,

@@ -9,8 +9,9 @@
 
   그래서 **프로그램만 따로 도는 창**을 여는 바로가기를 만든다.
 
-만드는 것 두 개
+만드는 것 세 개
   증거파인더 실행    프로그램 화면 (streamlit)
+  증거파인더 전사    녹음 전사 (명령창 · 밤샘용)
   증거파인더 클로드   클로드 코드 (이 폴더에서 시작)
 
 왜 .bat 이 아니라 바로가기인가
@@ -85,6 +86,15 @@ def shortcut_specs(root: Path = None, python: str = None) -> list[dict]:
             "description": "증거파인더 화면을 엽니다. 이 창을 닫으면 프로그램도 꺼집니다.",
         },
         {
+            # 밤새 걸어둘 때 쓴다. Streamlit 은 브라우저 연결이 끊기면
+            # 실행이 중단될 수 있어, 긴 전사를 화면에서 돌리면 위험하다.
+            "name": "증거파인더 전사",
+            "target": "powershell.exe",
+            "arguments": f'-NoExit -Command "& \'{py}\' evidence/transcribe.py"',
+            "workdir": str(root),
+            "description": "녹음 전사를 명령창에서 돌립니다. 밤새 걸어둬도 됩니다.",
+        },
+        {
             "name": "증거파인더 클로드",
             "target": "powershell.exe",
             "arguments": "-NoExit -Command claude",
@@ -151,6 +161,7 @@ def main() -> int:
     print()
     print("  [증거파인더 실행]  프로그램 화면 — 실제로 증거를 찾는 곳")
     print("                     검은 창이 같이 뜹니다. 그 창을 닫으면 프로그램도 꺼집니다.")
+    print("  [증거파인더 전사]  녹음 전사 — 밤새 걸어둘 때 이걸 쓰세요")
     print("  [증거파인더 클로드] 코드 고치기 · 검증 · 오류 잡기")
     print(M["dline"] * 68 + "\n")
     return 0

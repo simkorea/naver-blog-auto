@@ -75,8 +75,8 @@ def sidebar(conn):
         c2.metric("검색 구간", f"{s['segments']:,}")
         if s["pending"]:
             st.warning(f"미처리 {s['pending']}건 — [분석 실행] 탭에서 처리하세요")
-        if s["mismatch"] or s["low_conf"]:
-            st.info(f"확인 필요 구간 {s['mismatch'] + s['low_conf']}건")
+        if s["needs_check"]:
+            st.info(f"확인 필요 구간 {s['needs_check']:,}건")
         if s["basket"]:
             st.success(f"발췌 담긴 구간 {s['basket']}건")
 

@@ -6,6 +6,7 @@
 음성은 시간이 걸리니 나눠서 돌릴 수 있게 했다.
 중단해도 다음에 남은 것부터 이어서 처리한다.
 """
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -133,30 +134,94 @@ def _terms_editor():
             st.success(f"{len(terms)}개 저장했습니다. 다음 전사부터 반영됩니다.")
 
 
+def _fmt_dur(sec: float) -> str:
+    """초를 사람이 읽는 시간으로."""
+    sec = max(int(sec or 0), 0)
+    h, rest = divmod(sec, 3600)
+    m, s = divmod(rest, 60)
+    if h:
+        return f"{h}시간 {m}분"
+    if m:
+        return f"{m}분 {s}초"
+    return f"{s}초"
+
+
 def _run(conn, kinds, **kwargs):
     rows = pipeline.pending(conn, kinds=kinds)
     if not rows:
         st.info("처리할 자료가 없습니다.")
         return
 
-    bar = st.progress(0.0)
+    # 시작하자마자 "무엇을 건너뛰는지"를 말해준다.
+    # 이걸 안 보여줘서, 남은 27건 중 1번째인 [1/27] 을 사용자가
+    # "처음부터 다시 하는 것"으로 읽었다.
+    skipping = pipeline.already_done(conn, kinds)
+    interrupted = [r for r in rows if r["status"] == "extracting"]
+    head = f"남은 {len(rows)}건을 처리합니다."
+    if skipping:
+        head = (f"이미 끝난 **{skipping}건은 건너뜁니다.** "
+                f"남은 **{len(rows)}건**을 처리합니다.")
+    if interrupted:
+        head += (f" (그중 {len(interrupted)}건은 지난번에 중간에 멈춘 것이라 "
+                 "그 파일만 처음부터 다시 합니다)")
+    st.info(head)
+
+    # 남은 시간 예상에 쓸 전체 길이. 길이를 모르는 파일은 빼고 센다.
+    total_sec = sum(r["duration_sec"] or 0 for r in rows)
+    done_sec = 0.0
+    started = time.time()
+
+    bar_all = st.progress(0.0, text=f"전체 0 / {len(rows)}건")
+    bar_one = st.progress(0.0, text="준비 중...")
+    eta_box = st.empty()
     log = st.empty()
     lines = []
 
-    def on_progress(i, total, name, msg):
-        bar.progress(i / max(total, 1), text=f"[{i}/{total}] {name}")
-        if msg != "처리 중...":
-            lines.append(f"{'✅' if '실패' not in msg else '❌'} {name} — {msg}")
-            log.markdown("\n\n".join(f"　{l}" for l in lines[-12:]))
+    def _eta(processed_sec: float) -> str:
+        """지금까지의 실제 속도로 남은 시간을 낸다."""
+        if not total_sec or processed_sec <= 0:
+            return ""
+        elapsed = time.time() - started
+        speed = processed_sec / max(elapsed, 0.1)      # 오디오 초 / 실제 초
+        left = (total_sec - processed_sec) / max(speed, 1e-6)
+        return f"남은 시간 약 {_fmt_dur(left)}"
 
-    result = pipeline.run(conn, kinds=kinds, progress=on_progress, **kwargs)
-    bar.empty()
+    def on_file(i, total, name, frac):
+        cur = rows[i - 1]["duration_sec"] or 0
+        pos = f"{_fmt_dur(cur * frac)} / {_fmt_dur(cur)}" if cur else f"{frac * 100:.0f}%"
+        bar_one.progress(min(max(frac, 0.0), 1.0), text=f"지금 · {name}　{pos}")
+        eta = _eta(done_sec + cur * frac)
+        if eta:
+            eta_box.caption(eta)
+
+    def on_progress(i, total, name, msg):
+        nonlocal done_sec
+        bar_all.progress((i - 1) / max(total, 1),
+                         text=f"전체 {i - 1} / {total}건" +
+                              (f"　·　이미 끝난 {skipping}건은 건너뜀" if skipping else ""))
+        if msg == "처리 중...":
+            bar_one.progress(0.0, text=f"지금 · {name}")
+            return
+        done_sec += rows[i - 1]["duration_sec"] or 0
+        bar_all.progress(i / max(total, 1), text=f"전체 {i} / {total}건")
+        lines.append(f"{'✅' if '실패' not in msg else '❌'} {name} — {msg}")
+        log.markdown("\n\n".join(f"　{l}" for l in lines[-12:]))
+
+    result = pipeline.run(conn, kinds=kinds, progress=on_progress,
+                          file_progress=on_file, **kwargs)
+    bar_all.empty()
+    bar_one.empty()
+    eta_box.empty()
 
     if result["failed"]:
         st.warning(f"완료 {result['done']}건 · 실패 {result['failed']}건 · "
                    f"구간 {result['segments']:,}개")
     else:
         st.success(f"완료 {result['done']}건 · 구간 {result['segments']:,}개 생성")
+    st.caption(
+        "여기서 창을 닫아도 끝난 것은 그대로 남습니다. "
+        "다시 시작하면 남은 것부터 이어서 합니다."
+    )
 
     # 의미 검색 인덱스 갱신
     with st.spinner("의미 검색 인덱스를 만드는 중..."):
@@ -178,7 +243,10 @@ def _status_table(conn):
     if not rows:
         return
 
-    icon = {"registered": "⬜ 대기", "extracting": "🔄 처리중",
+    # 'extracting' 은 아무것도 안 도는 상태에서도 남는다 — 처리 중에 창을
+    # 닫거나 프로그램이 끊기면 그대로 굳는다. '처리중'으로 보여주면
+    # 사용자는 지금 돌고 있는 줄 안다. 무엇을 다시 하게 되는지 밝힌다.
+    icon = {"registered": "⬜ 대기", "extracting": "⏸ 중단됨 — 다시 하면 이 파일만 처음부터",
             "extracted": "✅ 완료", "verified": "✅ 완료", "failed": "❌ 실패"}
     for r in rows:
         name = Path(r["path"]).name

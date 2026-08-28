@@ -9,7 +9,7 @@
 from .. import config, db, integrity
 
 
-def extract_one(conn, source_row, **kwargs) -> tuple[int, str]:
+def extract_one(conn, source_row, file_progress=None, **kwargs) -> tuple[int, str]:
     """
     원본 하나를 처리한다. 돌려주는 값: (구간 수, 메시지)
 
@@ -30,7 +30,10 @@ def extract_one(conn, source_row, **kwargs) -> tuple[int, str]:
             n = documents.extract(conn, source_row)
         elif kind == config.KIND_AUDIO:
             from . import audio
-            n = audio.extract(conn, source_row, **kwargs)
+            # 파일 하나를 처리하는 동안의 진행률. audio.extract 는 원래부터
+            # 이 콜백을 받게 되어 있었는데 위에서 넘겨주지 않아 배선이
+            # 끊겨 있었다. 그래서 긴 녹음에서 화면이 멈춘 듯 보였다.
+            n = audio.extract(conn, source_row, progress=file_progress, **kwargs)
         else:
             db.set_status(conn, source_row["id"], "failed", f"알 수 없는 종류: {kind}")
             return 0, f"알 수 없는 종류: {kind}"
@@ -63,20 +66,51 @@ def pending(conn, kinds=None, redo: bool = False):
     return conn.execute(sql, args).fetchall()
 
 
-def run(conn, kinds=None, redo: bool = False, progress=None, **kwargs) -> dict:
+def already_done(conn, kinds=None) -> int:
+    """이미 끝나 이번에 건너뛸 건수. 화면에 보여주기 위한 값."""
+    sql = "SELECT count(*) FROM sources WHERE status IN ('extracted','verified')"
+    args = []
+    if kinds:
+        sql += f" AND kind IN ({','.join('?' * len(kinds))})"
+        args.extend(kinds)
+    r = conn.execute(sql, args).fetchone()
+    return r[0] if r else 0
+
+
+def run(conn, kinds=None, redo: bool = False, progress=None,
+        file_progress=None, stop=None, **kwargs) -> dict:
     """
-    일괄 처리. progress 콜백: (현재, 전체, 파일명, 메시지)
+    일괄 처리.
+
+    progress       (현재, 전체, 파일명, 메시지)  — 파일 단위
+    file_progress  (현재, 전체, 파일명, 0.0~1.0) — **파일 하나 안에서의 진행률**
+    stop           () -> bool. True 를 돌려주면 지금 파일까지만 하고 멈춘다
+
+    파일 안 진행률이 왜 필요한가
+      9분짜리 녹음 하나를 처리하는 데 몇 분이 걸리는데 그동안 화면이
+      전혀 움직이지 않으면 사용자는 멈춘 줄 안다. 실제로 그렇게 판단해
+      다시 누르는 일이 있었다. 그러면 그 파일만 처음부터 다시 한다.
     """
     rows = pending(conn, kinds=kinds, redo=redo)
     done, failed, segments = 0, 0, 0
+    stopped = False
 
+    from pathlib import Path
     for i, row in enumerate(rows, 1):
-        from pathlib import Path
+        if stop is not None and stop():
+            stopped = True
+            break
+
         name = Path(row["path"]).name
         if progress:
             progress(i, len(rows), name, "처리 중...")
 
-        n, msg = extract_one(conn, row, **kwargs)
+        on_file = None
+        if file_progress:
+            def on_file(frac, _i=i, _name=name):
+                file_progress(_i, len(rows), _name, frac)
+
+        n, msg = extract_one(conn, row, file_progress=on_file, **kwargs)
         segments += n
         if n > 0 or "실패" not in msg:
             done += 1
@@ -86,4 +120,5 @@ def run(conn, kinds=None, redo: bool = False, progress=None, **kwargs) -> dict:
             progress(i, len(rows), name, msg)
 
     return {"total": len(rows), "done": done, "failed": failed,
-            "segments": segments}
+            "segments": segments, "stopped": stopped,
+            "skipped_done": already_done(conn, kinds)}

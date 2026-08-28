@@ -155,6 +155,97 @@ def run(tmp_path) -> bool:
                           (sid,)).fetchone()[0]
     c.ok("확인 필요" in detail, "요약에 확인 필요 건수가 남는다", detail)
 
+    # ── 이어서 하기 · 진행률 배선 ──────────────────
+    # 사용자가 전사를 한참 돌리다 멈춘 줄 알고 다시 눌렀다.
+    # 화면이 [1/27] 로 보여 "처음부터 다시 한다"고 생각했지만, 실제로는
+    # 남은 27건 중 1번째였다. 진짜 결함은 두 가지였다:
+    #   · 파일 안 진행률 콜백이 pipeline 에서 audio 로 전달되지 않아
+    #     긴 녹음에서 화면이 멈춘 듯 보였다 (배선이 끊겨 있었다)
+    #   · "이미 몇 건 끝났는지"를 화면이 말해주지 않았다
+    from evidence.ingest import pipeline, scanner
+
+    resume_dir = tmp_path / "이어하기"
+    resume_dir.mkdir()
+    for i in range(4):
+        (resume_dir / f"녹음{i}.m4a").write_bytes(f"AUDIO{i}".encode())
+    scanner.scan(conn, resume_dir)
+
+    pend = pipeline.pending(conn, kinds=(config.KIND_AUDIO,))
+    ids = [r["id"] for r in pend]
+    c.ok(len(ids) >= 4, "새로 넣은 녹음이 대기 목록에 들어간다")
+
+    # 두 건을 끝난 것으로 표시하면 다음부터 목록에서 빠져야 한다
+    # (앞 단계에서 이미 끝난 건이 있으므로 늘어난 만큼으로 센다)
+    done_before = pipeline.already_done(conn, (config.KIND_AUDIO,))
+    db.set_status(conn, ids[0], "extracted", "완료")
+    db.set_status(conn, ids[1], "verified", "완료")
+    after = pipeline.pending(conn, kinds=(config.KIND_AUDIO,))
+    c.eq(len(after), len(ids) - 2, "끝난 것은 다시 처리하지 않는다")
+    c.ok(all(r["id"] not in ids[:2] for r in after),
+         "끝난 그 두 건이 목록에서 빠졌다")
+    c.eq(pipeline.already_done(conn, (config.KIND_AUDIO,)), done_before + 2,
+         "건너뛸 건수를 셀 수 있다 (화면에 '이미 N건 끝남'으로 보여준다)")
+
+    # 중간에 멈춘 것(extracting)은 다시 목록에 들어와야 한다
+    db.set_status(conn, ids[2], "extracting")
+    again = pipeline.pending(conn, kinds=(config.KIND_AUDIO,))
+    c.ok(any(r["id"] == ids[2] for r in again),
+         "중간에 멈춘 파일은 다시 처리 대상이 된다")
+
+    # 파일 안 진행률이 실제로 audio 까지 전달되는가 ← 이번 결함의 핵심
+    seen = []
+
+    def _file_progress(i, total, name, frac):
+        seen.append(frac)
+
+    import evidence.ingest.audio as audio_mod
+    real_extract = audio_mod.extract
+
+    def _spy(conn_, row, progress=None, **kw):
+        # 실제 전사 대신, 받은 콜백을 그대로 불러 본다
+        if progress:
+            progress(0.5)
+            progress(1.0)
+        return real_extract(conn_, row, progress=progress, **kw)
+
+    audio_mod.extract = _spy
+    try:
+        pipeline.run(conn, kinds=(config.KIND_AUDIO,),
+                     file_progress=_file_progress)
+    finally:
+        audio_mod.extract = real_extract
+
+    c.ok(seen, "파일 안 진행률이 pipeline 을 거쳐 전달된다",
+         f"{len(seen)}회 보고됨")
+    c.ok(all(0.0 <= f <= 1.0 for f in seen), "진행률이 0~1 범위다")
+
+    # 멈추라고 하면 지금 파일까지만 하고 멈춘다
+    for sid in ids:
+        db.set_status(conn, sid, "registered")
+    stop_after = {"n": 0}
+
+    def _stop():
+        stop_after["n"] += 1
+        return stop_after["n"] > 2
+
+    res = pipeline.run(conn, kinds=(config.KIND_AUDIO,), stop=_stop)
+    c.ok(res["stopped"], "멈추라는 신호를 받으면 멈춘다")
+    c.ok(res["done"] < len(ids), "남은 것은 다음에 이어서 한다",
+         f"{res['done']}건만 처리")
+
+    # 확인 필요 건수를 두 번 세지 않는다
+    seg = conn.execute("SELECT id FROM segments LIMIT 1").fetchone()
+    if seg:
+        db.write(conn, "UPDATE segments SET alt_mismatch = 1, confidence = 0.1 "
+                       "WHERE id = ?", (seg[0],))
+        st = db.stats(conn)
+        c.ok(st["needs_check"] <= st["segments"],
+             "확인 필요 건수가 전체 구간 수를 넘지 않는다",
+             f"확인 필요 {st['needs_check']} / 전체 {st['segments']}")
+        c.ok(st["needs_check"] < st["mismatch"] + st["low_conf"]
+             or st["mismatch"] == 0 or st["low_conf"] == 0,
+             "둘 다 해당하는 구간을 두 번 세지 않는다")
+
     conn.close()
     return c.report()
 

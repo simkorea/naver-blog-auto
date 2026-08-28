@@ -396,6 +396,14 @@ def stats(conn) -> dict:
         "pending": one("SELECT count(*) FROM sources WHERE status='registered'"),
         "low_conf": one("SELECT count(*) FROM segments WHERE confidence IS NOT NULL AND confidence < 0.6"),
         "mismatch": one("SELECT count(*) FROM segments WHERE alt_mismatch = 1"),
+        # 한 구간이 '전사 불일치'이면서 동시에 '신뢰도 낮음'인 경우가 흔하다.
+        # 두 값을 더하면 그런 구간을 두 번 세어, 확인 필요 건수가 전체 구간
+        # 수보다 커지는 일이 생긴다(실제로 1,486 > 1,443 이 화면에 떴다).
+        # 숫자가 안 맞으면 나머지 숫자도 못 믿게 되므로 한 번만 센다.
+        "needs_check": one(
+            "SELECT count(*) FROM segments "
+            "WHERE alt_mismatch = 1 "
+            "   OR (confidence IS NOT NULL AND confidence < 0.6)"),
         "verified_ear": one("SELECT count(*) FROM notes WHERE verified_by_ear = 1"),
         "basket": one("SELECT count(*) FROM basket"),
         "tags": one("SELECT count(*) FROM tags"),
