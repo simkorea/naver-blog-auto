@@ -210,7 +210,7 @@ def _overview_table(rows):
           "상대방": r["counterparty"] or "",
           "상태": r["status"]}
          for r in rows],
-        use_container_width=True, hide_index=True, height=360,
+        width="stretch", hide_index=True, height=360,
     )
 
 
@@ -381,7 +381,7 @@ def _collect_section():
               "걸린 이유": ("폴더명: " if h["by_folder"] else "") + ", ".join(h["matched"]),
               "위치": str(Path(h["path"]).parent)}
              for h in hits],
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
 
         if st.button(f"{len(hits)}개를 저장 폴더로 복사", type="primary",
@@ -396,7 +396,7 @@ def _collect_section():
                 st.info(f"{len(out['duplicate'])}개는 이미 같은 파일이 있어 건너뛰었습니다.")
             if out["failed"]:
                 st.error(f"{len(out['failed'])}개는 복사하지 못했습니다.")
-                st.dataframe(out["failed"], use_container_width=True, hide_index=True)
+                st.dataframe(out["failed"], width="stretch", hide_index=True)
             st.caption(
                 "원본은 있던 자리에 그대로 있습니다. "
                 "이제 아래에서 이 폴더를 지정해 스캔하세요."

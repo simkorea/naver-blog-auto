@@ -349,6 +349,101 @@ def run(tmp_path) -> bool:
     c.ok(not strays, "블로그 대시보드 포트(8501)로 되돌아간 곳이 없다",
          f"{strays or '없음'}")
 
+    # ── 경고 소음이 화면을 뒤덮지 않는가 ────────────
+    # 화자 분리를 돌리면 torchaudio 의 폐기 예고문 세 가지가 오디오 조각마다
+    # 반복되어 수백 줄씩 쏟아졌다. 오류가 아닌데 오류처럼 보이고, 진짜 오류가
+    # 그 사이에 묻힌다. 아래 넷을 지킨다.
+    import contextlib as _ctx
+    import io as _io
+    import warnings as _warn
+
+    # 사장님 화면에 실제로 뜬 문구를, 실제로 뜬 자리 그대로.
+    _FLOOD = [
+        ("In 2.9, this function's implementation will be changed to use "
+         "torchaudio.load_with_torchcodec under the hood. Some parameters "
+         "like ``normalize``, ``format``, ``buffer_size``, and ``backend`` "
+         "will be ignored. We recommend that you port your code to rely "
+         "directly on TorchCodec's decoder instead: "
+         "https://docs.pytorch.org/torchcodec/stable/generated/"
+         "torchcodec.decoders.AudioDecoder.html#torchcodec.decoders.AudioDecoder.",
+         "torchaudio/_backend/utils.py", 213, "torchaudio._backend.utils"),
+        ("torchaudio._backend.utils.info has been deprecated. "
+         "It will be removed from the 2.9 release.",
+         "pyannote/audio/core/io.py", 85, "pyannote.audio.core.io"),
+        ("torchaudio._backend.common.AudioMetaData has been deprecated. "
+         "It will be removed from the 2.9 release.",
+         "torchaudio/_backend/soundfile_backend.py", 120,
+         "torchaudio._backend.soundfile_backend"),
+    ]
+
+    def _printed(emit) -> str:
+        """실제로 화면(stderr)에 찍힌 글자를 그대로 돌려준다."""
+        buf = _io.StringIO()
+        with _ctx.redirect_stderr(buf):
+            emit()
+        return buf.getvalue()
+
+    def _flood(times: int, wipe_filters: bool):
+        def go():
+            for _ in range(times):
+                # 라이브러리가 오디오 조각마다 이 블록을 드나든다.
+                # 그것만으로 "이미 보여준 것" 기록이 무효가 되어 반복 출력된다.
+                with _warn.catch_warnings():
+                    if wipe_filters:
+                        # 이 한 줄이 우리가 걸어둔 차단 필터를 지운다.
+                        _warn.simplefilter("always")
+                    for msg, fname, lineno, mod in _FLOOD:
+                        _warn.warn_explicit(msg, UserWarning, fname, lineno,
+                                            module=mod)
+        return go
+
+    from evidence.console import quiet_known_warnings as _quiet
+    _quiet()
+
+    c.ok(_printed(_flood(5, wipe_filters=False)) == "",
+         "화자 분리 폐기 예고문 3종이 화면에 안 나온다",
+         _printed(_flood(1, wipe_filters=False))[:120])
+
+    # 필터가 지워진 상태에서도 막혀야 한다. showwarning 덧댐이 없으면 여기서
+    # 15줄이 쏟아진다 (3종 x 5회).
+    c.ok(_printed(_flood(5, wipe_filters=True)) == "",
+         "필터가 지워져도(simplefilter) 폐기 예고문이 안 나온다",
+         _printed(_flood(1, wipe_filters=True))[:120])
+
+    # 제일 중요한 것 — 모르는 경고까지 숨기면 진짜 문제를 못 본다.
+    def _real_warning():
+        with _warn.catch_warnings():
+            _warn.simplefilter("always")
+            _warn.warn_explicit("증거 DB 가 잠겨 있습니다", UserWarning,
+                                "evidence/db.py", 10, module="evidence.db")
+
+    c.ok("증거 DB 가 잠겨" in _printed(_real_warning),
+         "목록에 없는 진짜 경고는 그대로 화면에 나온다")
+
+    # ── 화면 프로그램도 소음 차단을 켜는가 ──────────
+    # 명령창 진입점들은 전부 켜는데 app.py 만 빠져 있어서, 정작 화자 분리를
+    # 돌리는 화면에서만 경고가 쏟아졌다.
+    _app_src = (repo / "evidence" / "app.py").read_text(encoding="utf-8")
+    _lines = _app_src.splitlines()
+    _setup_at = next((i for i, ln in enumerate(_lines)
+                      if "_console_setup()" in ln and not ln.lstrip().startswith("#")), None)
+    _st_at = next((i for i, ln in enumerate(_lines)
+                   if ln.startswith("import streamlit")), None)
+    c.ok(_setup_at is not None, "화면(app.py)도 경고 차단을 켠다")
+    c.ok(_setup_at is not None and _st_at is not None and _setup_at < _st_at,
+         "차단을 streamlit·torch 를 불러오기 전에 켠다",
+         f"setup {_setup_at} / streamlit {_st_at}")
+
+    # ── Streamlit 이 이름 바꾸라고 찍는 안내가 남았는가 ──
+    # 파이썬 경고가 아니라 Streamlit 이 직접 찍는 것이라 위 차단으로는 안 잡힌다.
+    _old_param = [f.relative_to(repo).as_posix()
+                  for f in (repo / "evidence").rglob("*.py")
+                  if "use_container_width" in f.read_text(encoding="utf-8",
+                                                          errors="ignore")]
+    c.ok(not _old_param,
+         "화면 코드에 use_container_width 가 남아 있지 않다",
+         f"{_old_param or '없음'}")
+
     conn.close()
     return c.report()
 

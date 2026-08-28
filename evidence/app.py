@@ -22,6 +22,12 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+# 경고 소음 차단을 **torch·pyannote 를 불러오기 전에** 걸어야 한다.
+# 화면에도 이것을 켜지 않아 화자 분리 중 torchaudio 폐기 예고문이
+# 수백 줄씩 쏟아졌다 (명령창 쪽은 이미 켜져 있었다).
+from evidence.console import setup as _console_setup       # noqa: E402
+_console_setup()
+
 import streamlit as st
 
 from evidence import config, db
