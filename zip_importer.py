@@ -36,15 +36,22 @@ _HEADING_MAX_LEN = 45
 
 # ── 원고 텍스트 파싱 ─────────────────────────────────────────────────────────
 
+# 섹션 헤더는 '줄 전체가 [이름]' 인 경우만 인정합니다.
+# 예전에는 그냥 다음 '[' 에서 잘랐는데, 본문에 각주 표기([3], [15] 등)가
+# 들어오면 거기서 본문이 끊겨 원고 대부분이 사라졌습니다.
+_SECTION_RE = re.compile(r"^[ \t]*\[([^\]\n]{1,24})\][ \t]*$", re.M)
+
+
 def _extract_section(name: str, text: str) -> str:
-    """[섹션명] 마커 다음부터 그 다음 [ 마커 전까지를 잘라냅니다."""
-    marker = f"[{name}]"
-    start = text.find(marker)
-    if start == -1:
-        return ""
-    start += len(marker)
-    next_idx = text.find("[", start)
-    return (text[start:] if next_idx == -1 else text[start:next_idx]).strip()
+    """[섹션명] 줄 다음부터 그 다음 섹션 줄 전까지를 돌려줍니다."""
+    headers = list(_SECTION_RE.finditer(text))
+    for i, m in enumerate(headers):
+        if m.group(1).strip() != name:
+            continue
+        start = m.end()
+        end = headers[i + 1].start() if i + 1 < len(headers) else len(text)
+        return text[start:end].strip()
+    return ""
 
 
 def _is_heading(para: str) -> bool:

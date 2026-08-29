@@ -249,12 +249,41 @@ def _fill_publish_options(page, iframe, tags: list, category: str = "",
     네이버 UI가 바뀌어 각 항목이 실패해도 본문 입력 결과에는 영향이 없도록
     항목별로 따로 try 처리합니다.
     """
-    try:
-        print("[7] 발행 옵션 설정 중...")
-        iframe.locator("button.publish_btn__m9KHH, button:has-text('발행')").first.click(timeout=8000)
-        time.sleep(2)
-    except Exception as e:
-        print(f"  [안내] 발행 패널을 열지 못했습니다 ({e}) - 직접 [발행]을 눌러 설정해주세요.")
+    print("[7] 발행 옵션 설정 중...")
+
+    # 네이버는 클래스 이름에 해시가 붙어(publish_btn__m9KHH 등) 수시로 바뀝니다.
+    # 게다가 :has-text('발행') 는 자식 텍스트까지 훑기 때문에 바로 옆 '예약'
+    # 버튼(reserve_btn__..., data-click-area=...schedule)을 잡아버렸습니다.
+    # 그래서 '바뀌지 않는 속성 -> 클래스 접두사 -> 정확한 텍스트' 순으로 시도하고,
+    # 눈에 보이는 버튼만 고릅니다.
+    _PUBLISH_SELECTORS = (
+        "button[data-click-area='tpb.publish']",
+        "button[data-click-area$='.publish']",
+        "button[class*='publish_btn']",
+        "button:text-is('발행')",
+    )
+
+    opened = False
+    for sel in _PUBLISH_SELECTORS:
+        try:
+            btn = iframe.locator(sel).filter(visible=True).first
+            btn.wait_for(state="visible", timeout=3000)
+            btn.click(timeout=3000)
+            time.sleep(2)
+            print(f"  -> 발행 패널 열림 ({sel})")
+            opened = True
+            break
+        except Exception:
+            continue
+
+    if not opened:
+        print("  [안내] 발행 패널을 열지 못했습니다 - 화면에서 직접 [발행]을 눌러 설정해주세요.")
+        if tags:
+            print(f"         태그: {' '.join('#' + t for t in tags)}")
+        if category:
+            print(f"         카테고리: {category}")
+        if visibility:
+            print(f"         공개설정: {visibility}")
         return
 
     # ── 카테고리 ──

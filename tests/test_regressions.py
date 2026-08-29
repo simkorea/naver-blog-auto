@@ -258,3 +258,66 @@ def test_playwright를_venv에서_불러올_수_있다():
     from step2_upload import PLAYWRIGHT_OK
 
     assert PLAYWRIGHT_OK, "venv 에서 playwright 를 불러오지 못했습니다"
+
+
+# ─────────────────────────────────────────────────────────────
+# 9. 본문 속 각주 표기([3], [15])에서 원고가 잘리던 버그
+#    증상: 2,892자 원고가 275자만 임포트되고, 이미지도 2/10장만 들어감
+#    원인: 섹션 구분을 '다음 [ 문자'로 찾아서 각주에서 끊김
+# ─────────────────────────────────────────────────────────────
+
+FOOTNOTE_SAMPLE = """[제목]
+청년 43조 투입, 부동산 3중 고민
+
+[메타설명]
+8월 29일 부동산 주요 뉴스.
+
+[태그]
+#청년주택, #고금리
+
+[본문]
+## 청년 43조 원 지원
+
+정부가 예산을 편성했습니다.[3] 후속 정책을 주목해야 합니다.
+
+## 대출금리 8% 육박
+
+금리 상단이 8%에 근접합니다.[15] 관망세가 심화될 전망입니다.[16]
+
+## 마무리
+
+내일도 뉴스를 확인하세요.
+
+#청년주택 #고금리
+"""
+
+
+def test_각주가_있어도_본문이_잘리지_않는다():
+    from zip_importer import parse_manuscript
+
+    title, body, tags = parse_manuscript(FOOTNOTE_SAMPLE)
+
+    assert "[3]" in body, "각주가 사라졌습니다"
+    assert "대출금리 8% 육박" in body, "두 번째 섹션이 잘렸습니다"
+    assert "내일도 뉴스를 확인하세요" in body, "마지막 섹션이 잘렸습니다"
+    assert len(body) > 100, f"본문이 너무 짧습니다({len(body)}자) - 각주에서 잘렸습니다"
+
+
+def test_각주가_있어도_제목과_태그는_정상():
+    from zip_importer import normalize_tags, parse_manuscript
+
+    title, _, raw_tags = parse_manuscript(FOOTNOTE_SAMPLE)
+    assert title == "청년 43조 투입, 부동산 3중 고민"
+    assert normalize_tags(raw_tags) == ["청년주택", "고금리"]
+
+
+def test_각주_있는_원고도_이미지가_고르게_퍼진다():
+    """본문이 잘리면 문단이 줄어 이미지도 몇 장만 들어간다."""
+    from step2_upload import plan_image_positions
+    from zip_importer import parse_manuscript
+
+    _, body, _ = parse_manuscript(FOOTNOTE_SAMPLE)
+    paras = [p for p in body.split("\n\n") if p.strip()]
+
+    pos = plan_image_positions(len(paras), 4)
+    assert len(pos) == 4, f"문단 {len(paras)}개인데 이미지가 {len(pos)}장만 배치됐습니다"
