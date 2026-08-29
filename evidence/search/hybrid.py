@@ -31,10 +31,36 @@ def _fts_escape(term: str) -> str:
     return '"' + term.replace('"', '""') + '"'
 
 
+# 공백 말고도 구분자로 볼 것들.
+# 화면의 예시가 `환불 / 설명 들었 / ...` 라서, 사용자가 슬래시로 여러 개를
+# 넣는 일이 실제로 있었다. 그때 `대출/` 처럼 슬래시가 붙은 단어가 만들어져
+# **어떤 글에도 없는 단어**가 되고, 검색이 0건으로 나왔다.
+_SEPARATORS = re.compile(r"[\s/,|·、;]+")
+
+# 단어 끝에 붙은 문장부호는 떼어낸다. `대출.` 로는 아무것도 못 찾는다.
+_EDGE_JUNK = ".,!?;:·|/\\'()[]{}~-"
+
+
+def _plain_terms(text: str) -> list[str]:
+    return [t for t in (p.strip(_EDGE_JUNK) for p in _SEPARATORS.split(text)) if t]
+
+
 def _split_terms(query: str) -> list[str]:
-    """공백으로 나누되 따옴표로 묶인 구절은 하나로 본다."""
-    terms = re.findall(r'"([^"]+)"|(\S+)', query.strip())
-    return [a or b for a, b in terms if (a or b)]
+    """
+    검색어를 단어로 나눈다.
+
+    따옴표로 묶은 구절은 통째로 하나로 본다 — 그 안의 슬래시·쉼표는
+    구분자로 보지 않는다 ("1325호/1225호" 처럼 찾고 싶을 수 있다).
+    """
+    out, pos = [], 0
+    for m in re.finditer(r'"([^"]*)"', query):
+        out.extend(_plain_terms(query[pos:m.start()]))
+        phrase = m.group(1).strip()
+        if phrase:
+            out.append(phrase)
+        pos = m.end()
+    out.extend(_plain_terms(query[pos:]))
+    return out
 
 
 def keyword_search(conn, query: str, limit: int = 200,
@@ -198,15 +224,49 @@ def _filter_ids(conn, ids, filters):
 # ─────────────────────────────────────────────────────────
 # 융합
 # ─────────────────────────────────────────────────────────
+def keyword_search_any(conn, terms: list[str], limit: int = 200,
+                       filters: dict = None) -> list[dict]:
+    """
+    단어를 **하나라도** 포함하는 구간을 찾는다.
+
+    한 단어씩 따로 찾아 합친다. `keyword_search` 를 그대로 여러 번 부르므로
+    검색 규칙(FTS/LIKE, 3글자 경계, 필터)이 어긋날 여지가 없다.
+
+    `search()` 가 **0건일 때만** 쓰는 구제책이다. 기본은 '모두 포함'이다 —
+    증거를 찾는 일에서는 정확도가 먼저다.
+    """
+    best = {}
+    for t in terms:
+        for item in keyword_search(conn, t, limit=limit, filters=filters):
+            sid = item["segment_id"]
+            if sid not in best or item["rank"] < best[sid]["rank"]:
+                best[sid] = item
+    ranked = sorted(best.values(), key=lambda x: x["rank"])[:limit]
+    return [{**it, "rank": i + 1} for i, it in enumerate(ranked)]
+
+
 def search(conn, query: str, limit: int = 50, filters: dict = None,
            use_semantic: bool = True) -> list[dict]:
     """
     키워드 + 의미 검색을 RRF로 합친 최종 결과.
     각 항목에는 어느 쪽에서 걸렸는지(matched_by)가 표시된다.
+
+    '모두 포함'이 0건이면 '하나라도 포함'으로 한 번 더 찾는다.
+    각 항목의 `search_mode` 가 어느 쪽으로 찾았는지 알려준다 — 화면이
+    그것을 사용자에게 말해줘야, 왜 이런 결과가 나왔는지 알 수 있다.
     """
     kw = keyword_search(conn, query, limit=limit * 4, filters=filters)
     sem = semantic_search(conn, query, limit=limit * 4, filters=filters) \
         if use_semantic else []
+
+    terms = _split_terms(query)
+    mode = "모두"
+    if not kw and not sem and len(terms) > 1:
+        # 단어를 여럿 넣으면 그 전부가 한 구간에 있어야 한다. 실제로 사용자가
+        # 일곱 단어를 한 번에 넣어 0건이 나왔다. 그냥 0건으로 두면 왜 없는지
+        # 알 방법이 없다.
+        kw = keyword_search_any(conn, terms, limit=limit * 4, filters=filters)
+        mode = "하나라도"
 
     scores, origin = {}, {}
     for group, name in ((kw, "키워드"), (sem, "의미")):
@@ -231,6 +291,8 @@ def search(conn, query: str, limit: int = 50, filters: dict = None,
         d = dict(d)
         d["rrf_score"] = round(score, 5)
         d["matched_by"] = "+".join(origin.get(sid, []))
+        d["search_mode"] = mode
+        d["term_count"] = len(terms)
         out.append(d)
     return out
 

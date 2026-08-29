@@ -12,6 +12,13 @@
     python evidence/transcribe.py            남은 것 전부 전사
     python evidence/transcribe.py --status   지금 상태만 보기
     python evidence/transcribe.py --text     텍스트 자료만 (빠름)
+    python evidence/transcribe.py --index    의미 검색 색인만 만들기
+
+의미 검색 색인이 왜 따로 있나
+  검색창의 "의미 검색 함께"는 색인이 있어야 돈다. 색인이 없으면 체크가
+  되어 있어도 **아무 일도 하지 않고** 정확히 그 단어만 찾는다.
+  전사가 끝나면 이 스크립트가 색인까지 만든다. 다만 예전에 이 스크립트로
+  전사만 해 둔 경우에는 색인이 없으므로 `--index` 로 따로 만든다.
 
 이미 끝난 것은 건너뛴다
   `pipeline.pending()` 이 끝난 것(`extracted`)을 애초에 목록에서 뺀다.
@@ -73,10 +80,59 @@ def show_status(conn, pipeline, config) -> None:
     print(M["dline"] * 68 + "\n")
 
 
+def build_search_index(conn) -> int:
+    """
+    의미 검색 색인을 만든다. 돌려주는 값: 새로 넣은 구간 수.
+
+    화면(`evidence/ui/tab_analyze.py`)이 전사 끝에 부르는 것과 **같은 함수**를
+    쓴다. 여기에 그것이 빠져 있어서, 명령창으로 밤새 전사한 경우 검색창의
+    "의미 검색 함께"가 켜져 있어도 아무 일도 하지 않았다.
+
+    모델이 없거나 sqlite-vec 가 없으면 0을 돌려준다 — 키워드 검색은 그대로
+    되므로 전사 결과를 못 쓰게 되는 일은 없다.
+    """
+    from evidence.search import embed
+
+    state = {"last": 0.0}
+
+    def on_progress(done, total):
+        now = time.time()
+        if now - state["last"] < 1.0 and done < total:
+            return
+        state["last"] = now
+        pct = done / max(total, 1) * 100
+        print(f"\r  의미 검색 색인  {done:,} / {total:,}  {pct:3.0f}%    ",
+              end="", flush=True)
+
+    n = embed.build_index(conn, progress=on_progress)
+    print("\r" + " " * 60, end="\r")
+    return n
+
+
+def show_index_state(conn) -> None:
+    """색인이 몇 건이나 있는지. 없으면 무엇을 뜻하는지 알려준다."""
+    from evidence import db
+
+    total = conn.execute("SELECT count(*) FROM segments").fetchone()[0]
+    if not db.vec_available(conn):
+        print(f"  {M['no']} 의미 검색을 쓸 수 없습니다 (sqlite-vec 없음). "
+              "키워드 검색은 정상입니다.")
+        return
+    have = conn.execute("SELECT count(*) FROM vec_segments").fetchone()[0]
+    if have >= total and total:
+        print(f"  {M['ok']} 의미 검색 색인  {have:,} / {total:,}구간")
+    else:
+        print(f"  {M['no']} 의미 검색 색인  {have:,} / {total:,}구간 — "
+              "지금은 정확히 그 단어만 찾습니다")
+        print("      만들려면:  python evidence/transcribe.py --index")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="증거파인더 전사 실행")
     ap.add_argument("--status", action="store_true", help="지금 상태만 보기")
     ap.add_argument("--text", action="store_true", help="텍스트 자료만 처리")
+    ap.add_argument("--index", action="store_true",
+                    help="전사는 하지 않고 의미 검색 색인만 만들기")
     ap.add_argument("--no-cross", action="store_true",
                     help="이중 모델 교차 검증 끄기 (약 2배 빠름)")
     ap.add_argument("--no-diarize", action="store_true", help="화자 분리 끄기")
@@ -87,7 +143,26 @@ def main() -> int:
 
     conn = db.init()
     show_status(conn, pipeline, config)
+
     if args.status:
+        show_index_state(conn)
+        return 0
+
+    if args.index:
+        # 전사는 건드리지 않는다. 색인만 만든다.
+        print("  의미 검색 색인을 만듭니다. 처음이면 모델을 받느라 오래 걸립니다.\n")
+        try:
+            n = build_search_index(conn)
+        except BaseException as e:
+            print(f"  {M['no']} 색인을 만들지 못했습니다: {type(e).__name__}: {e}")
+            print("      키워드 검색은 그대로 됩니다.\n")
+            return 1
+        if n:
+            print(f"  {M['ok']} 의미 검색 색인 {n:,}건을 만들었습니다.\n")
+        else:
+            print("  새로 만들 것이 없습니다.\n")
+        show_index_state(conn)
+        print()
         return 0
 
     kinds = pipeline.TEXT_KINDS if args.text else (config.KIND_AUDIO,)
@@ -172,7 +247,21 @@ def main() -> int:
               f"구간 {result['segments']:,}개 만들었습니다")
     print(M["line"] * 68)
 
+    # 전사 결과를 의미 검색으로도 찾을 수 있게 한다.
+    # 화면은 이것을 이미 하고 있었는데 여기에만 빠져 있었다.
+    if not result["stopped"]:
+        try:
+            n = build_search_index(conn)
+            if n:
+                print(f"  {M['ok']} 의미 검색 색인 {n:,}건 추가")
+        except BaseException as e:
+            # 색인을 못 만들어도 전사 결과는 멀쩡하다. 키워드 검색은 된다.
+            print(f"  {M['no']} 의미 검색 색인 실패 ({type(e).__name__}) — "
+                  "키워드 검색은 그대로 됩니다")
+
     show_status(conn, pipeline, config)
+    show_index_state(conn)
+    print()
     print("  이제 화면에서 검색하시면 됩니다.")
     print("      python -m streamlit run evidence/app.py --server.port 8532\n")
     return 0

@@ -29,10 +29,21 @@ def render(conn):
         return
 
     with st.form("search_form"):
+        # placeholder 에 슬래시로 예시를 여러 개 늘어놓았더니, 사용자가
+        # "슬래시로 여러 개를 넣으라"는 뜻으로 읽고 일곱 단어를 한 번에 넣어
+        # 0건이 나왔다. 예시는 **하나만** 둔다.
         q = st.text_input(
             "무엇을 찾으시나요?",
-            placeholder="예)  환불    /    설명 들었    /    고객이 계약을 인정하는 뉘앙스",
-            help="단어를 넣으면 정확히 그 단어를, 문장을 넣으면 비슷한 상황을 찾습니다.",
+            placeholder="예)  환불",
+            help=(
+                "**한 번에 하나씩** 넣으시는 것이 가장 정확합니다.\n\n"
+                "여러 단어를 넣으면 그것을 **전부 포함한** 구간을 찾습니다. "
+                "그런 구간이 없으면 '하나라도 포함'으로 다시 찾아 알려드립니다.\n\n"
+                "**찾을 수 있는 것** — 실제로 입에서 나온 말 "
+                "(`대출`, `포기`, `환불해 달라`)\n\n"
+                "**찾을 수 없는 것** — 목소리 톤·울음·화난 기색. "
+                "전사에는 말의 내용만 남고 감정은 글자로 남지 않습니다."
+            ),
         )
         c1, c2, c3, c4 = st.columns(4)
         speaker = c1.selectbox("화자", ["전체"] + hybrid.speakers(conn))
@@ -46,6 +57,18 @@ def render(conn):
         use_sem = c4.checkbox("의미 검색 함께", value=True,
                               help="표현이 달라도 비슷한 상황을 찾습니다.")
         go = st.form_submit_button("검색", type="primary")
+
+    # 체크는 되어 있는데 색인이 없으면 아무 일도 하지 않는다. 실제로 명령창으로
+    # 밤새 전사한 뒤 색인이 하나도 없는 채로 검색해 0건이 나온 일이 있었다.
+    # 켜져 있는 것처럼 보이면서 안 도는 것이 가장 나쁘다.
+    missing = _semantic_gap(conn, s["segments"])
+    if use_sem and missing:
+        st.info(
+            f"**의미 검색 색인이 {missing:,}구간 비어 있습니다.** "
+            "지금은 정확히 그 단어만 찾습니다.\n\n"
+            "만들려면 명령창에서 — 몇 분 걸립니다:\n\n"
+            "`python evidence/transcribe.py --index`"
+        )
 
     if go and q.strip():
         st.session_state["last_query"] = q.strip()
@@ -70,6 +93,12 @@ def render(conn):
         return
 
     st.markdown(f"**{len(hits)}건** 찾음 — `{q}`")
+    if hits and hits[0].get("search_mode") == "하나라도":
+        st.warning(
+            f"넣으신 **{hits[0].get('term_count', 0)}개 단어를 모두** 포함하는 "
+            "구간은 없어서, **하나라도** 포함하는 구간을 찾았습니다.\n\n"
+            "한 단어씩 나눠 찾으시면 훨씬 정확합니다."
+        )
     for h in hits:
         _result_card(conn, h, q)
 
@@ -95,6 +124,17 @@ def _quick_links(conn):
         c2.markdown("**쟁점별 구간**")
         for t in tags:
             c2.caption(f"· {t['tag']} — {t['n']}건")
+
+
+def _semantic_gap(conn, total_segments: int) -> int:
+    """의미 검색 색인이 몇 구간이나 비어 있는지. 못 세면 0(= 조용히)."""
+    if not total_segments or not db.vec_available(conn):
+        return 0
+    try:
+        have = conn.execute("SELECT count(*) FROM vec_segments").fetchone()[0]
+    except Exception:
+        return 0
+    return max(total_segments - (have or 0), 0)
 
 
 def _result_card(conn, h, query):

@@ -169,6 +169,78 @@ def run(tmp_path) -> bool:
     c.ok("제750조" not in stripped and "2011다109357" not in stripped,
          "AI 본문에서 조문·사건번호를 제거한다", stripped)
 
+    # ── 검색어를 여러 개 넣었을 때 ────────────────
+    # 화면 예시가 `환불 / 설명 들었 / ...` 라서 사용자가 슬래시로 일곱 단어를
+    # 한 번에 넣었고, 4,675구간이 있는데도 0건이 나왔다. 두 가지가 겹쳤다.
+    #   (1) `대출/` 처럼 슬래시가 붙어 어떤 글에도 없는 단어가 됐다
+    #   (2) 넣은 단어를 **모두** 포함하는 구간을 찾는데 그런 구간은 없었다
+    ssid = add("검색어처리.m4a", "audio")
+    db.add_segments(conn, ssid, [
+        {"seq": 1, "text": "대출이 안 나온다고 하셔서 제가 알아봤습니다",
+         "start_sec": 10, "end_sec": 15},
+        {"seq": 2, "text": "이제 그만 포기하겠다고 말씀하셨죠",
+         "start_sec": 30, "end_sec": 34},
+        {"seq": 3, "text": "정말 죽겠다 싶을 만큼 힘들었습니다",
+         "start_sec": 50, "end_sec": 55},
+    ])
+
+    # (1) 슬래시·쉼표가 붙어도 죽은 단어가 되지 않는다
+    c.eq(hybrid._split_terms("대출/"), ["대출"], "단어에 붙은 슬래시를 떼어낸다")
+    c.eq(hybrid._split_terms("대출, 환불"), ["대출", "환불"],
+         "쉼표도 구분자로 본다")
+    c.ok(len(hybrid.search(conn, "대출/", use_semantic=False)) == 1,
+         "슬래시가 붙은 검색어로도 찾는다")
+
+    # 따옴표로 묶으면 그 안의 슬래시는 구분자가 아니다
+    c.eq(hybrid._split_terms('"1325호/1225호" 대출'), ["1325호/1225호", "대출"],
+         "따옴표로 묶은 구절 안의 슬래시는 그대로 둔다")
+
+    # (2) 사장님이 실제로 넣으신 그 질의
+    real_q = "화내는 목소리 / 우는 상태/ 포기하겠다 / 죽겠다/ 대출/"
+    hits = hybrid.search(conn, real_q, use_semantic=False)
+    c.ok(len(hits) == 3, "모두 포함이 0건이면 하나라도 포함으로 찾는다",
+         f"{len(hits)}건")
+    c.ok(hits and hits[0].get("search_mode") == "하나라도",
+         "어느 쪽으로 찾았는지 알려준다 — 화면이 사용자에게 설명해야 한다")
+    c.ok(hits and hits[0].get("term_count") == 7, "나눈 단어 수도 알려준다")
+
+    # (3) 평소 검색은 흐려지지 않는다 — '모두 포함'이 되면 그대로 쓴다
+    both = hybrid.search(conn, "대출 알아봤습니다", use_semantic=False)
+    c.eq(len(both), 1, "둘 다 든 구간이 있으면 그것만 찾는다")
+    c.ok(both and both[0]["search_mode"] == "모두",
+         "구제책이 평소 결과를 대신하지 않는다")
+    c.eq(len(hybrid.search(conn, "어디에도없는말", use_semantic=False)), 0,
+         "정말 없는 말은 0건 그대로다")
+
+    # ── 밤샘 전사가 의미 검색 색인을 만드는가 ──────
+    # 색인을 만드는 embed.build_index() 가 화면에만 있고 명령창 실행
+    # (evidence/transcribe.py) 에는 빠져 있었다. 그래서 밤새 전사한 뒤
+    # "의미 검색 함께"에 체크가 되어 있어도 아무 일도 하지 않았다.
+    tsrc = (Path(__file__).resolve().parent.parent
+            / "evidence" / "transcribe.py").read_text(encoding="utf-8")
+    c.ok("build_index" in tsrc,
+         "명령창 전사도 의미 검색 색인을 만든다")
+    c.ok("--index" in tsrc,
+         "전사 없이 색인만 만드는 길이 있다 (이미 전사가 끝난 경우)")
+
+    import evidence.transcribe as _tr
+    c.ok(callable(getattr(_tr, "build_search_index", None)),
+         "색인 만들기를 함수로 부를 수 있다")
+    c.ok(callable(getattr(_tr, "show_index_state", None)),
+         "색인이 있는지 없는지 화면에 보여준다")
+
+    # 화면도 색인이 비었을 때 알려준다
+    from evidence.ui import tab_search as _ts
+    c.ok(callable(getattr(_ts, "_semantic_gap", None)),
+         "화면이 색인이 비었는지 확인한다")
+    c.eq(_ts._semantic_gap(conn, 0), 0, "구간이 없으면 조용히 넘어간다")
+
+    # 검색창 예시가 다시 슬래시로 돌아가지 않았는가
+    ui_src = (Path(__file__).resolve().parent.parent
+              / "evidence" / "ui" / "tab_search.py").read_text(encoding="utf-8")
+    c.ok('placeholder="예)  환불"' in ui_src,
+         "검색창 예시는 하나만 둔다 (슬래시로 여러 개를 넣게 만들지 않는다)")
+
     conn.close()
     return c.report()
 
