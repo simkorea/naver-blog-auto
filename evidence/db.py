@@ -278,15 +278,52 @@ def write_many(conn, sql, rows):
         conn.commit()
 
 
+class DatabaseBusy(RuntimeError):
+    """
+    증거 DB 를 다른 프로그램이 잡고 있다.
+
+    화면(Streamlit)을 켜 둔 채 명령창에서 무언가를 돌리면 실제로 일어난다.
+    새 표를 만드는 것처럼 DB 구조를 손대는 일은 잠깐 독점이 필요한데,
+    화면이 물고 있으면 그것을 못 얻는다.
+
+    사용자는 개발자가 아니다. `database is locked` 만 던지면 무엇을 해야
+    하는지 알 수 없으므로, 여기서 할 일을 한국어로 적어 넘긴다.
+    """
+
+
+_BUSY_HINT = (
+    "증거 DB 를 다른 프로그램이 잡고 있어 시작하지 못했습니다.\n"
+    "  거의 항상 원인은 하나입니다 — 증거파인더 화면이 켜져 있는 것입니다.\n"
+    "\n"
+    "  이렇게 하세요:\n"
+    "    1. 증거파인더 브라우저 탭을 닫습니다\n"
+    "    2. 같이 떠 있는 검은 창(streamlit 이 도는 창)도 닫습니다\n"
+    "    3. 이 명령을 다시 실행합니다\n"
+    "\n"
+    "  자료는 안전합니다. 잠겨서 시작을 못 했을 뿐, 아무것도 바뀌지 않았습니다."
+)
+
+
+def _is_busy(err: Exception) -> bool:
+    t = str(err).lower()
+    return "locked" in t or "busy" in t
+
+
 def init(path=None) -> sqlite3.Connection:
     """스키마 생성. 이미 있으면 그대로 둔다."""
     conn = connect(path)
-    conn.executescript(_SCHEMA)
-    conn.execute(
-        "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
-        (str(SCHEMA_VERSION),),
-    )
-    conn.commit()
+    try:
+        conn.executescript(_SCHEMA)
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
+            (str(SCHEMA_VERSION),),
+        )
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        conn.close()
+        if _is_busy(e):
+            raise DatabaseBusy(_BUSY_HINT) from e
+        raise
     _init_vec(conn)
     return conn
 

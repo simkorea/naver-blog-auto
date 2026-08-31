@@ -202,7 +202,20 @@ def main() -> int:
     from evidence import config, db
     from evidence.ingest import pipeline
 
-    conn = db.init()
+    try:
+        conn = db.init()
+    except db.DatabaseBusy as e:
+        # 화면을 켜 둔 채 명령창을 돌리면 실제로 일어난다.
+        # 스택 트레이스 대신 무엇을 해야 하는지 보여준다.
+        print()
+        print(M["dline"] * 68)
+        print(f"  {M['no']} 시작하지 못했습니다")
+        print(M["dline"] * 68)
+        print()
+        print("  " + str(e).replace("\n", "\n  "))
+        print()
+        return 1
+
     show_status(conn, pipeline, config)
 
     if args.status:

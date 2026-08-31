@@ -444,6 +444,51 @@ def run(tmp_path) -> bool:
          "화면 코드에 use_container_width 가 남아 있지 않다",
          f"{_old_param or '없음'}")
 
+    # ── DB 가 잠겼을 때 무엇을 해야 하는지 알려주는가 ──
+    # 화면(Streamlit)을 켜 둔 채 명령창을 돌리면 실제로 일어났다.
+    # `--voiceprint` 가 새 표를 만들려다 잠금에 걸려 죽었는데, 화면에는
+    # `database is locked` 만 떴다. 사용자는 개발자가 아니다.
+    import os as _os
+    import sqlite3 as _sq
+    import subprocess as _sp
+
+    lock_db = tmp_path / "lock_test.db"
+    lock_work = tmp_path / "lock_work"
+    lock_work.mkdir(exist_ok=True)
+    lock_env = dict(_os.environ, EVIDENCE_DB=str(lock_db),
+                    EVIDENCE_WORK=str(lock_work))
+
+    repo2 = Path(__file__).resolve().parent.parent
+    _sp.run([sys.executable, str(repo2 / "evidence" / "transcribe.py"), "--status"],
+            env=lock_env, capture_output=True, cwd=str(repo2))
+
+    holder = _sq.connect(str(lock_db), timeout=1)
+    holder.execute("PRAGMA busy_timeout = 0")
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        r = _sp.run([sys.executable, str(repo2 / "evidence" / "transcribe.py"),
+                     "--voiceprint"],
+                    env=lock_env, capture_output=True, text=True, cwd=str(repo2))
+        out = (r.stdout or "") + (r.stderr or "")
+        c.ok(r.returncode != 0, "잠긴 DB 로는 시작하지 않는다")
+        c.ok("화면이 켜져 있는 것입니다" in out,
+             "왜 안 되는지 한국어로 알려준다")
+        c.ok("브라우저 탭을 닫습니다" in out,
+             "무엇을 해야 하는지 알려준다")
+        c.ok("자료는 안전합니다" in out,
+             "자료가 멀쩡하다고 안심시킨다 — 소송 자료라 겁먹기 쉽다")
+        c.ok("Traceback" not in out,
+             "스택 트레이스를 그대로 쏟아내지 않는다")
+    finally:
+        holder.rollback()
+        holder.close()
+
+    # 잠금이 아닌 진짜 오류는 감추지 않는다
+    from evidence import db as _db
+    c.ok(_db._is_busy(Exception("database is locked")), "잠금 오류를 알아본다")
+    c.ok(not _db._is_busy(Exception("no such table: segments")),
+         "잠금이 아닌 오류는 잠금으로 오해하지 않는다")
+
     conn.close()
     return c.report()
 
