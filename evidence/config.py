@@ -169,6 +169,12 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
 EMBED_DIM = 1024                                   # bge-m3 출력 차원
 DIARIZE_MODEL = os.getenv("DIARIZE_MODEL", "pyannote/speaker-diarization-3.1")
 
+# 목소리 지문 모델 — 파일을 가로질러 "같은 사람"을 묶을 때 쓴다.
+# 위 화자분리 파이프라인이 **안에서 쓰는 바로 그 모델**이라, 화자 분리가
+# 되는 상태면 이미 내려받혀 있다. 새로 받지 않는다.
+EMBED_SPEAKER_MODEL = os.getenv(
+    "EMBED_SPEAKER_MODEL", "pyannote/wespeaker-voxceleb-resnet34-LM")
+
 
 def whisper_options() -> dict:
     """

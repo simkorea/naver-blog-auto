@@ -13,6 +13,7 @@
     python evidence/transcribe.py --status   지금 상태만 보기
     python evidence/transcribe.py --text     텍스트 자료만 (빠름)
     python evidence/transcribe.py --index    의미 검색 색인만 만들기
+    python evidence/transcribe.py --voiceprint  목소리로 화자 묶기
 
 의미 검색 색인이 왜 따로 있나
   검색창의 "의미 검색 함께"는 색인이 있어야 돈다. 색인이 없으면 체크가
@@ -130,12 +131,69 @@ def show_index_state(conn) -> None:
         print("      만들려면:  python evidence/transcribe.py --index")
 
 
+def build_voiceprints(conn) -> dict:
+    """
+    목소리 지문을 만들고 파일을 가로질러 같은 사람끼리 묶는다.
+
+    왜 필요한가 — `evidence/ingest/voiceprint.py` 맨 위에 적어 두었다.
+    한 줄로: 화자 분리는 파일 하나씩 돌아가므로 'SPEAKER_00' 이 파일마다
+    다른 사람이다. 그대로 이름을 붙이면 '나'와 '상대방'이 뒤바뀐다.
+    """
+    from evidence.ingest import voiceprint
+
+    state = {"last": 0.0}
+
+    def on_progress(i, total, name, speaker):
+        now = time.time()
+        if now - state["last"] < 0.5 and i < total:
+            return
+        state["last"] = now
+        print(f"\r  목소리 지문  [{i}/{total}] {name[:38]} · {speaker}      ",
+              end="", flush=True)
+
+    made = voiceprint.build(conn, progress=on_progress)
+    print("\r" + " " * 70, end="\r")
+    n_groups = voiceprint.cluster(conn)
+    made["groups"] = n_groups
+    return made
+
+
+def show_voiceprint_state(conn) -> None:
+    """묶음이 몇 개인지, 사장님으로 보이는 묶음이 무엇인지."""
+    from evidence.ingest import voiceprint
+
+    gs = voiceprint.groups(conn)
+    if not gs:
+        n_spk = conn.execute(
+            "SELECT count(DISTINCT source_id || '/' || speaker) FROM segments "
+            "WHERE speaker IS NOT NULL").fetchone()[0]
+        if n_spk:
+            print(f"  {M['no']} 목소리 묶음 없음 — 화자 {n_spk}쌍이 아직 안 묶였습니다")
+            print("      화자 이름을 붙이기 전에 반드시 만드세요:")
+            print("        python evidence/transcribe.py --voiceprint")
+        return
+
+    print(f"  {M['ok']} 목소리 묶음  {len(gs)}명")
+    me = voiceprint.suggest_me(conn)
+    for g in gs[:6]:
+        mark = "  ← 사장님으로 보임" if g["group_no"] == me else ""
+        name = g["label"] or f"묶음 {g['group_no']}"
+        print(f"      {name}  ·  통화 {g['file_count']}건  ·  "
+              f"구간 {g['segments']:,}개{mark}")
+    if len(gs) > 6:
+        print(f"      … 그 밖 {len(gs) - 6}명")
+    for w in voiceprint.problems(conn):
+        print(f"      {M['no']} {w}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="증거파인더 전사 실행")
     ap.add_argument("--status", action="store_true", help="지금 상태만 보기")
     ap.add_argument("--text", action="store_true", help="텍스트 자료만 처리")
     ap.add_argument("--index", action="store_true",
                     help="전사는 하지 않고 의미 검색 색인만 만들기")
+    ap.add_argument("--voiceprint", action="store_true",
+                    help="목소리 지문으로 파일을 가로질러 화자 묶기")
     ap.add_argument("--no-cross", action="store_true",
                     help="이중 모델 교차 검증 끄기 (약 2배 빠름)")
     ap.add_argument("--no-diarize", action="store_true", help="화자 분리 끄기")
@@ -149,6 +207,30 @@ def main() -> int:
 
     if args.status:
         show_index_state(conn)
+        show_voiceprint_state(conn)
+        return 0
+
+    if args.voiceprint:
+        print("  목소리 지문을 만듭니다. 화자 분리에 쓰는 모델과 같은 것이라")
+        print("  새로 받지 않습니다.\n")
+        try:
+            r = build_voiceprints(conn)
+        except BaseException as e:
+            print(f"  {M['no']} 만들지 못했습니다: {type(e).__name__}: {e}\n")
+            return 1
+        print(f"  {M['ok']} 지문 {r['made']}개를 만들고 {r['groups']}명으로 묶었습니다.")
+        if r["failed"]:
+            print(f"  {M['no']} 건너뛴 것 {len(r['failed'])}개:")
+            for name, spk, why in r["failed"][:8]:
+                print(f"      {name[:40]} · {spk} — {why}")
+            if len(r["failed"]) > 8:
+                print(f"      … 그 밖 {len(r['failed']) - 8}개")
+        print()
+        show_voiceprint_state(conn)
+        print()
+        print("  이제 화면 [③ 화자 지정] 에서 대표 발화를 들어보고")
+        print("  '나' / '고객 ○○○' 으로 지정하세요. 한 번 지정하면 그 사람이")
+        print("  나오는 모든 통화에 정확히 붙습니다.\n")
         return 0
 
     if args.index:
@@ -262,8 +344,19 @@ def main() -> int:
             print(f"  {M['no']} 의미 검색 색인 실패 ({type(e).__name__}) — "
                   "키워드 검색은 그대로 됩니다")
 
+    # 화자 이름을 파일마다 정확히 붙이려면 목소리 지문이 있어야 한다.
+    if not result["stopped"]:
+        try:
+            r = build_voiceprints(conn)
+            if r["made"]:
+                print(f"  {M['ok']} 목소리 지문 {r['made']}개 · {r['groups']}명으로 묶음")
+        except BaseException as e:
+            print(f"  {M['no']} 목소리 묶기 실패 ({type(e).__name__}) — "
+                  "나중에 --voiceprint 로 다시 하세요")
+
     show_status(conn, pipeline, config)
     show_index_state(conn)
+    show_voiceprint_state(conn)
     print()
     print("  이제 화면에서 검색하시면 됩니다.")
     print("      python -m streamlit run evidence/app.py --server.port 8532\n")

@@ -103,6 +103,27 @@ CREATE TRIGGER IF NOT EXISTS segments_au AFTER UPDATE OF text ON segments BEGIN
 END;
 
 -- ───────────────────────────────────────── 쟁점 · 태그 · 판단
+-- ───────────────────────────────────────── 목소리 지문
+-- 화자 분리(pyannote)는 **파일 하나씩** 돌아간다. 그래서 'SPEAKER_00' 은
+-- 그 파일 안에서 먼저 말한 사람일 뿐, 파일이 다르면 다른 사람이다.
+-- 53건에 'SPEAKER_00 = 나' 를 한꺼번에 붙이면 절반쯤은 뒤바뀐다.
+-- 법정에 내는 문서에서 '나'와 '상대방'이 바뀌는 것은 치명적이다.
+--
+-- 그래서 (파일, 화자) 마다 목소리 지문을 만들어 두고, 파일을 가로질러
+-- 같은 사람끼리 묶는다(group_no). 이름은 **묶음 단위로** 붙인다.
+CREATE TABLE IF NOT EXISTS voiceprints (
+    id          INTEGER PRIMARY KEY,
+    source_id   INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    speaker     TEXT NOT NULL,        -- 그 파일 안에서의 이름 (SPEAKER_00 …)
+    vector      BLOB NOT NULL,        -- 목소리 지문
+    dim         INTEGER NOT NULL,
+    seconds     REAL,                 -- 지문을 만드는 데 쓴 음성 길이
+    group_no    INTEGER,              -- 파일을 가로질러 묶은 번호
+    made_at     TEXT NOT NULL,
+    UNIQUE(source_id, speaker)
+);
+CREATE INDEX IF NOT EXISTS idx_vp_group ON voiceprints(group_no);
+
 CREATE TABLE IF NOT EXISTS issues (
     id           INTEGER PRIMARY KEY,
     name         TEXT NOT NULL UNIQUE,

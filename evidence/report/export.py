@@ -90,6 +90,49 @@ def full_transcript_text(conn, source_id: int) -> str:
     return "\n".join(out)
 
 
+def all_transcripts(conn, out_dir, as_docx: bool = True,
+                    progress=None) -> dict:
+    """
+    처리된 녹음·문서를 **전부** 전사본으로 뽑아 한 폴더에 넣는다.
+
+    화면에서 하나씩 고르면 53건은 53번을 눌러야 한다. 변호사에게 통째로
+    넘기거나 밤에 읽어보려면 한 번에 나와야 한다.
+
+    파일 이름은 `01_2022-05-18_통화녹음….docx` 처럼 앞에 번호와 날짜를
+    붙인다 — 폴더에서 시간순으로 정렬되어야 읽기 쉽다.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    rows = conn.execute(
+        """SELECT id, path, occurred_at FROM sources
+           WHERE status IN ('extracted','verified')
+           ORDER BY COALESCE(occurred_at, ''), id"""
+    ).fetchall()
+
+    made, failed = [], []
+    for i, r in enumerate(rows, 1):
+        stem = Path(r["path"]).stem[:50]
+        day = (r["occurred_at"] or "")[:10] or "날짜미상"
+        base = f"{i:02d}_{day}_{stem}"
+        if progress:
+            progress(i, len(rows), Path(r["path"]).name)
+        try:
+            if as_docx:
+                out = out_dir / f"{base}.docx"
+                full_transcript_docx(conn, r["id"], out)
+            else:
+                out = out_dir / f"{base}.txt"
+                out.write_text(full_transcript_text(conn, r["id"]),
+                               encoding="utf-8")
+            made.append(out)
+        except BaseException as e:
+            # 한 건이 깨져도 나머지는 뽑아낸다
+            failed.append((Path(r["path"]).name, f"{type(e).__name__}: {e}"))
+
+    return {"made": made, "failed": failed, "dir": out_dir, "total": len(rows)}
+
+
 def full_transcript_docx(conn, source_id: int, out_path) -> Path:
     """전사본을 워드로. 인쇄해서 읽거나 변호사에게 넘길 때."""
     import docx

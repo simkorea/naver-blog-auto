@@ -131,6 +131,27 @@ def _export(conn):
         st.caption("아직 처리된 자료가 없습니다.")
 
     st.divider()
+    st.markdown("**전사본 전부 한 번에** — 처리된 자료를 통째로")
+    st.caption(
+        "한 건씩 누르지 않고 전부 뽑아 한 폴더에 넣습니다. "
+        "파일 이름 앞에 번호와 날짜가 붙어 시간순으로 정렬됩니다."
+    )
+    have_names = conn.execute(
+        "SELECT count(*) FROM segments WHERE speaker_label IS NOT NULL"
+    ).fetchone()[0]
+    if not have_names:
+        st.info(
+            "화자 이름을 아직 안 붙이셨습니다. 전사본에는 '화자1/화자2'로 "
+            "나옵니다. [③ 화자 지정] 에서 '나'/'고객'을 정하면 그 이름으로 "
+            "나옵니다."
+        )
+    c1, c2 = st.columns(2)
+    if c1.button("전부 워드로 저장", key="exp_all_docx"):
+        _save_all(conn, Path(out_dir) / "전사본_전체", as_docx=True)
+    if c2.button("전부 텍스트로 저장", key="exp_all_txt"):
+        _save_all(conn, Path(out_dir) / "전사본_전체", as_docx=False)
+
+    st.divider()
     st.markdown("**전체 구간 표** — 모든 구간을 한 표로")
     c1, c2 = st.columns(2)
     if c1.button("엑셀로 저장"):
@@ -143,6 +164,28 @@ def _export(conn):
     if st.button("HTML로 저장"):
         _save(lambda p: export.timeline_html(conn, p, case_name),
               Path(out_dir) / "타임라인.html")
+
+
+def _save_all(conn, out_dir: Path, as_docx: bool):
+    bar = st.progress(0.0, text="준비 중...")
+    try:
+        def on(i, total, name):
+            bar.progress(i / max(total, 1), text=f"[{i}/{total}] {name[:40]}")
+
+        r = export.all_transcripts(conn, out_dir, as_docx=as_docx, progress=on)
+    except Exception as e:
+        bar.empty()
+        st.error(f"실패: {e}")
+        return
+    bar.empty()
+    if not r["total"]:
+        st.warning("처리된 자료가 없습니다.")
+        return
+    st.success(f"**{len(r['made'])}건**을 저장했습니다 → `{r['dir']}`")
+    if r["failed"]:
+        st.error(f"{len(r['failed'])}건은 실패했습니다:")
+        for name, why in r["failed"][:10]:
+            st.caption(f"· {name} — {why}")
 
 
 def _save(fn, path: Path):

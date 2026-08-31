@@ -246,6 +246,109 @@ def run(tmp_path) -> bool:
              or st["mismatch"] == 0 or st["low_conf"] == 0,
              "둘 다 해당하는 구간을 두 번 세지 않는다")
 
+    # ── 파일을 가로질러 같은 사람 묶기 ──────────────
+    # 화자 분리(pyannote)는 파일 하나씩 돈다 — diarize.diarize() 가 파일
+    # 하나만 받으므로 다른 파일에 누가 있었는지 알 방법이 없다. 그래서
+    # 'SPEAKER_00' 은 **그 통화에서 먼저 말한 사람**일 뿐이다.
+    # 통화마다 누가 먼저 말하는지 다르므로, 한꺼번에 이름을 붙이면
+    # 상당수에서 '나'와 '상대방'이 뒤바뀐다. 법정 문서에서 치명적이다.
+    import numpy as np
+    from datetime import datetime as _dt
+    from evidence.ingest import voiceprint as vp
+
+    rng = np.random.default_rng(7)
+    me_voice = rng.normal(size=64)
+    me_voice /= np.linalg.norm(me_voice)
+    other_voices, who = {}, {}
+
+    for sid in range(101, 106):
+        vf = tmp_path / f"call{sid}.m4a"
+        vf.write_text(f"call{sid}", encoding="utf-8")
+        vsid, _ = db.add_source(conn, integrity.fingerprint(vf), "audio",
+                                is_my_conversation="Y")
+        db.set_status(conn, vsid, "extracted")
+        me_first = (sid % 2 == 1)          # 홀수 통화만 내가 먼저 말한다
+        rows = []
+        for turn in range(6):
+            # pyannote 는 **먼저 말한 사람**에게 SPEAKER_00 을 준다
+            spk = "SPEAKER_00" if turn % 2 == 0 else "SPEAKER_01"
+            who[(vsid, spk)] = "나" if (turn % 2 == 0) == me_first else f"상대{sid}"
+            rows.append({"seq": turn + 1, "speaker": spk,
+                         "text": f"{sid}번 통화 {turn}번째 발언입니다 길게 말합니다",
+                         "start_sec": turn * 10, "end_sec": turn * 10 + 9})
+        db.add_segments(conn, vsid, rows)
+
+    for (vsid, spk), person in who.items():
+        base = me_voice if person == "나" else other_voices.setdefault(
+            person, rng.normal(size=64) / np.linalg.norm(rng.normal(size=64)))
+        v = base + rng.normal(scale=0.05, size=64)
+        v = v / np.linalg.norm(v)
+        db.write(conn,
+                 """INSERT OR REPLACE INTO voiceprints
+                    (source_id, speaker, vector, dim, seconds, group_no, made_at)
+                    VALUES (?,?,?,?,?,NULL,?)""",
+                 (vsid, spk, vp._serialize(v), 64, 20.0,
+                  _dt.now().isoformat(timespec="seconds")))
+
+    n_groups = vp.cluster(conn)
+    c.eq(n_groups, 6, "통화 5건에서 사람 6명(나 1 + 상대 5)으로 묶는다")
+
+    me_group = vp.suggest_me(conn)
+    c.ok(me_group is not None, "사장님으로 보이는 묶음을 제안한다")
+    gs = {g["group_no"]: g for g in vp.groups(conn)}
+    c.eq(gs[me_group]["file_count"], 5,
+         "제안한 묶음이 통화 5건 전부에 나온다 — 상대방은 통화마다 다르다")
+
+    # 이름 붙이기가 파일마다 정확한가. 이것이 이 작업의 전부다.
+    vp.set_group_label(conn, me_group, "나")
+    labeled = conn.execute(
+        "SELECT source_id, speaker FROM segments WHERE speaker_label = '나' "
+        "GROUP BY source_id, speaker").fetchall()
+    wrong = [(r["source_id"], r["speaker"]) for r in labeled
+             if who.get((r["source_id"], r["speaker"])) != "나"]
+    c.eq(len(labeled), 5, "통화 5건 모두에 '나'가 붙는다")
+    c.ok(not wrong, "'나'가 상대방에게 잘못 붙은 곳이 없다", f"{wrong}")
+
+    # 옛 방식이면 실제로 뒤바뀌는지 — 안 뒤바뀐다면 이 작업이 무의미하다
+    old_way_wrong = [k for k in who
+                     if k[1] == "SPEAKER_00" and who[k] != "나"]
+    c.ok(len(old_way_wrong) > 0,
+         "옛 방식(SPEAKER_00 전부에 '나')이었다면 실제로 뒤바뀐다",
+         f"5건 중 {len(old_way_wrong)}건")
+
+    c.ok(not any("한 통화에서" in w for w in vp.problems(conn)),
+         "제대로 묶인 상태에서는 '한 통화에 같은 사람 둘' 경고가 없다")
+
+    # 한 통화 안에 같은 사람이 둘일 수는 없다 → 억지로 만들어 잡히는지
+    bad_no = max(gs) + 1
+    db.write(conn, "UPDATE voiceprints SET group_no = ? WHERE source_id = "
+                   "(SELECT MIN(source_id) FROM voiceprints)", (bad_no,))
+    c.ok(any("한 통화에서" in w for w in vp.problems(conn)),
+         "한 통화에서 두 화자가 같은 사람으로 묶이면 경고한다")
+    vp.cluster(conn)                       # 원상복구
+
+    # 화면이 묶기 전에는 이름을 못 붙이게 막는가
+    sp_src = (Path(__file__).resolve().parent.parent
+              / "evidence" / "ui" / "tab_speakers.py").read_text(encoding="utf-8")
+    c.ok("_needs_voiceprint" in sp_src and "voiceprint.groups" in sp_src,
+         "화면이 묶음 기준으로 이름을 붙인다")
+    c.ok("뒤바뀝니다" in sp_src,
+         "묶기 전에 이름을 붙이면 뒤바뀐다고 화면이 경고한다")
+
+    # ── 전사본을 한 번에 전부 뽑는가 ────────────────
+    from evidence.report import export as _exp
+    outdir = tmp_path / "전사본전체"
+    r = _exp.all_transcripts(conn, outdir, as_docx=False)
+    c.ok(len(r["made"]) >= 5, "처리된 자료를 한 번에 전부 뽑는다",
+         f"{len(r['made'])}건")
+    c.eq(len(r["failed"]), 0, "실패 없이 저장된다")
+    names = sorted(f.name for f in r["made"])
+    c.ok(names[0][:2].isdigit(),
+         "파일 이름 앞에 번호가 붙어 시간순으로 정렬된다", names[0])
+    body = r["made"][0].read_text(encoding="utf-8")
+    c.ok("전사본 —" in body and "해시" in body,
+         "전사본에 원본 이름과 해시가 들어간다")
+
     conn.close()
     return c.report()
 
