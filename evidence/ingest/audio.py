@@ -172,7 +172,10 @@ def transcribe(path, model_name: str = None, progress=None,
     # 전처리 — 실패해도 원본으로 계속 진행한다
     from . import preprocess
     if preprocess_level is None:
-        preprocess_level = preprocess.probe(path).get("suggested", "standard")
+        # .env 에서 고정했으면 그것을 쓰고, auto 면 음질을 보고 정한다.
+        fixed = (config.PREPROCESS_LEVEL or "auto").strip().lower()
+        preprocess_level = (preprocess.probe(path).get("suggested", "standard")
+                            if fixed in ("", "auto") else fixed)
     work_path, prep_note = preprocess.prepare(path, preprocess_level)
 
     opts = config.whisper_options()

@@ -349,6 +349,189 @@ def run(tmp_path) -> bool:
     c.ok("전사본 —" in body and "해시" in body,
          "전사본에 원본 이름과 해시가 들어간다")
 
+    # ── 정확도 손잡이와 설정 비교 ──────────────────
+    # "정확도를 올리고 싶다"에 답하려면 무엇이 실제로 나은지 **재야** 한다.
+    # 짐작으로 53건을 밤새 다시 돌리면, 더 나빠져도 알 방법이 없다.
+    import importlib as _il
+    import os as _os
+    import evidence.tune as tune
+
+    keep_env = {k: _os.environ.get(k) for k in
+                ("WHISPER_BEAM", "WHISPER_PATIENCE", "PREPROCESS_LEVEL")}
+    try:
+        c.eq(config.whisper_options()["beam_size"], 5, "기본 beam 은 5")
+        c.ok("patience" not in config.whisper_options(),
+             "기본에서는 patience 를 넘기지 않는다")
+
+        _os.environ["WHISPER_BEAM"] = "10"
+        _os.environ["WHISPER_PATIENCE"] = "2"
+        _il.reload(config)
+        opts = config.whisper_options()
+        c.eq(opts["beam_size"], 10, ".env 로 beam 을 올릴 수 있다")
+        c.eq(opts.get("patience"), 2.0, ".env 로 patience 를 올릴 수 있다")
+
+        _os.environ["PREPROCESS_LEVEL"] = "strong"
+        _il.reload(config)
+        c.eq(config.PREPROCESS_LEVEL, "strong", ".env 로 전처리 세기를 고정한다")
+
+        # 값만 읽히는 것으로는 부족하다. 그 값이 **실제 전사까지 전달되는지**
+        # 봐야 한다. 배선이 끊겨 있어도 위 검증은 통과해 버린다.
+        pf = tmp_path / "전처리배선.m4a"
+        pf.write_text("전처리배선", encoding="utf-8")
+        psid, _ = db.add_source(conn, integrity.fingerprint(pf), "audio",
+                                is_my_conversation="Y")
+        # 세기를 해석하는 곳은 `audio.transcribe` **안**이다. transcribe 를
+        # 통째로 가짜로 바꾸면 그 해석이 아예 안 돈다 — 처음에 그렇게 짰다가
+        # 배선이 멀쩡한데도 실패해서 검증을 다시 짰다.
+        # 모델과 전처리만 가짜로 두고 **진짜 transcribe** 를 돌린다.
+        from evidence.ingest import preprocess as _pp
+
+        seen = {}
+        _real_get, _real_prep = audio.get_model, _pp.prepare
+
+        class _FakeSeg:
+            text, start, end, words = "확인했습니다", 0.0, 1.0, None
+            avg_logprob, no_speech_prob, compression_ratio = -0.2, 0.01, 1.1
+
+        class _FakeModel:
+            def transcribe(self, path, **opts):
+                seen["opts"] = opts
+                return [_FakeSeg()], type("I", (), {"duration": 1.0})()
+
+        def _fake_prepare(src, level="standard", force=False):
+            seen["level"] = level
+            return Path(src), "가짜 전처리"
+
+        audio.get_model = lambda name: _FakeModel()
+        _pp.prepare = _fake_prepare
+        try:
+            row = dict(conn.execute("SELECT * FROM sources WHERE id = ?",
+                                    (psid,)).fetchone())
+            audio.extract(conn, row, cross_verify=False, diarize=False)
+        finally:
+            audio.get_model, _pp.prepare = _real_get, _real_prep
+
+        c.eq(seen.get("level"), "strong",
+             "고정한 전처리 세기가 실제 전사에 전달된다")
+        c.eq((seen.get("opts") or {}).get("beam_size"), 10,
+             "올린 beam 이 실제 모델 호출까지 전달된다")
+    finally:
+        for k, v in keep_env.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+        _il.reload(config)
+
+    c.eq(config.whisper_options()["beam_size"], 5, "되돌리면 기본으로 돌아온다")
+
+    # 설정마다 다르게 받아 적는 가짜 전사기로 비교 도구를 시험한다.
+    # 실제 모델 없이도 **비교·요약이 제대로 되는지**는 여기서 확인할 수 있다.
+    tf = tmp_path / "설정비교.m4a"
+    tf.write_text("설정비교", encoding="utf-8")
+    tsid, _ = db.add_source(conn, integrity.fingerprint(tf), "audio",
+                            is_my_conversation="Y")
+    db.set_status(conn, tsid, "extracted")
+    db.write(conn, "UPDATE sources SET duration_sec = 60 WHERE id = ?", (tsid,))
+
+    real_transcribe = audio.transcribe
+
+    def fake_transcribe(path, model_name=None, progress=None,
+                        preprocess_level=None):
+        if config.WHISPER_BEAM >= 10:
+            t = "계약금 삼천만원을 청라현대썬앤빌 1325호로 입금했습니다"
+        elif preprocess_level == "strong":
+            t = "계약금 삼천만원을 청라 현대 썬앤빌 1325호로 입금했습니다"
+        else:
+            t = "계약금 삼천만원을 천라 현대 산앤빌 1325호로 입금했습니다"
+        return [{"seq": 1, "text": t, "start_sec": 0, "end_sec": 8}]
+
+    audio.transcribe = fake_transcribe
+    try:
+        picked = tune.pick_source(conn)
+        c.ok(picked is not None, "비교에 쓸 녹음을 고른다")
+
+        got = {}
+        for name, _why, opts in tune.PRESETS:
+            rows, took = tune.run_preset(Path(picked["path"]), opts, 0, [])
+            got[name] = rows
+
+        c.ok("청라현대썬앤빌" in tune.text_of(got["정밀"]),
+             "설정을 올리면 실제로 다른 결과가 나온다 (손잡이가 전달된다)")
+        c.ok("썬앤빌" in tune.text_of(got["전처리강"]),
+             "전처리 세기도 전달된다")
+        c.eq(config.WHISPER_BEAM, 5,
+             "비교가 끝나면 원래 설정으로 되돌린다")
+
+        base = got["현재"]
+        c.ok(tune.similarity(base, got["정밀"]) < 1.0,
+             "다른 결과는 '같은 정도'가 1보다 작다")
+        c.eq(tune.similarity(base, got["전처리약"]), 1.0,
+             "같은 결과는 '같은 정도'가 1이다")
+
+        diffs = tune.differences(base, got["전처리강"])
+        c.eq(len(diffs), 2, "갈리는 곳을 낱말 단위로 짚는다")
+        pairs_ = {(d["base"], d["other"]) for d in diffs}
+        c.ok(("천라", "청라") in pairs_ and ("산앤빌", "썬앤빌") in pairs_,
+             "무엇이 무엇으로 바뀌었는지 나란히 보여준다", f"{pairs_}")
+        c.eq(tune.differences(base, got["전처리약"]), [],
+             "같으면 갈리는 곳이 없다")
+
+        # 앞 N분만 견주기
+        long_rows = [{"seq": 1, "text": "앞부분", "start_sec": 0, "end_sec": 5},
+                     {"seq": 2, "text": "뒷부분", "start_sec": 600, "end_sec": 605}]
+        audio.transcribe = lambda *a, **k: long_rows
+        short, _ = tune.run_preset(Path(picked["path"]), {}, 1.0, [])
+        c.eq(len(short), 1, "앞 N분만 견주라고 하면 그만큼만 쓴다")
+    finally:
+        audio.transcribe = real_transcribe
+
+    # ── 설정을 바꾼 뒤 전부 다시 전사하는가 ────────
+    # 문자열만 훑으면 배선이 끊겨도 통과한다. 실제로 돌려서 본다.
+    from evidence.ingest import pipeline as _pl
+
+    left_now = len(_pl.pending(conn, kinds=(config.KIND_AUDIO,)))
+    all_now = len(_pl.pending(conn, kinds=(config.KIND_AUDIO,), redo=True))
+    c.ok(all_now > left_now,
+         "이미 끝난 녹음이 있어야 이 검증이 의미가 있다",
+         f"전체 {all_now} · 남은 것 {left_now}")
+
+    import subprocess as _sp2
+    repo3 = Path(__file__).resolve().parent.parent
+    # 사본으로 돌린다. 진짜 DB 를 건드리면 뒤따르는 검증이 흔들린다
+    # (모델이 없으니 전사는 실패하고 status 가 failed 로 바뀐다).
+    #
+    # 그냥 파일 복사를 하면 WAL 에 남은 내용이 안 따라와 텅 빈 사본이 된다
+    # — 실제로 그렇게 만들었다가 "대상 0건"이 나왔다. 저장소에 이미 있는
+    # 안전 복사(backup.py)를 쓴다.
+    from evidence import backup as _bk
+    conn.commit()
+    redo_db = tmp_path / "redo_copy.db"
+    _bk._safe_copy_db(redo_db)
+    redo_env = dict(_os.environ, EVIDENCE_DB=str(redo_db),
+                    EVIDENCE_WORK=str(tmp_path / "redo_work"))
+    rr = _sp2.run([sys.executable, str(repo3 / "evidence" / "transcribe.py"),
+                   "--redo", "--no-cross", "--no-diarize"],
+                  env=redo_env, capture_output=True, text=True,
+                  cwd=str(repo3), timeout=300)
+    redo_out = (rr.stdout or "") + (rr.stderr or "")
+    c.ok("전부** 다시 합니다" in redo_out or "다시 합니다" in redo_out,
+         "--redo 가 이미 끝난 것까지 다시 한다고 알린다")
+    c.ok("백업" in redo_out,
+         "다시 전사하기 전에 백업을 권한다 — 기존 결과가 바뀐다")
+    c.ok("beam" in redo_out and "전처리" in redo_out,
+         "무슨 설정으로 다시 하는지 보여준다 — 모르고 밤새 돌리면 안 된다")
+
+    # 끝난 것을 실제로 목록에 넣는가 (배선이 끊기면 여기서 걸린다)
+    import re as _re
+    m = _re.search(r"\*\*(\d+)건 전부\*\* 다시", redo_out)
+    if m:
+        c.ok(int(m.group(1)) > left_now,
+             "다시 하는 건수가 '남은 것'보다 많다 — 끝난 것도 포함한다",
+             f"다시 {m.group(1)}건 · 남은 것 {left_now}건")
+    else:
+        c.ok(False, "다시 하는 건수를 화면에 알려준다", redo_out[:200])
+
     conn.close()
     return c.report()
 

@@ -176,6 +176,28 @@ EMBED_SPEAKER_MODEL = os.getenv(
     "EMBED_SPEAKER_MODEL", "pyannote/wespeaker-voxceleb-resnet34-LM")
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+# 전사 품질 손잡이 — .env 로 바꾼다. 올리면 느려지고 정확도가 오른다.
+#
+#   WHISPER_BEAM      후보를 몇 갈래로 놓고 볼지. 5 → 10 이면 대략 1.5~2배 느림.
+#   WHISPER_PATIENCE  그 갈래를 얼마나 끈질기게 따라갈지. 1 → 2 면 더 느리고 꼼꼼.
+#
+# 무엇이 실제로 나은지는 녹음마다 다르다. 짐작하지 말고 재 보라 —
+#   python evidence/tune.py     녹음 하나를 여러 설정으로 전사해 나란히 비교
+WHISPER_BEAM = _env_int("WHISPER_BEAM", 5)
+WHISPER_PATIENCE = _env_int("WHISPER_PATIENCE", 1)
+
+# 전처리 세기. auto 면 음질을 보고 알아서 정한다.
+#   auto | none | light | standard | strong
+PREPROCESS_LEVEL = os.getenv("PREPROCESS_LEVEL", "auto")
+
+
 def whisper_options() -> dict:
     """
     faster-whisper 전사 옵션.
@@ -186,10 +208,11 @@ def whisper_options() -> dict:
       condition_on_previous_text=False
                                한국어 장시간 통화에서 같은 문장이 무한 반복되는 고질 버그 차단.
       word_timestamps          발췌 구간을 단어 경계에 맞춰 자르기 위해 필요.
+      beam_size / patience     정확도 손잡이. 위 WHISPER_BEAM 설명 참고.
     """
-    return {
+    opts = {
         "language": "ko",
-        "beam_size": 5,
+        "beam_size": WHISPER_BEAM,
         "word_timestamps": True,
         "condition_on_previous_text": False,
         "vad_filter": True,
@@ -199,6 +222,9 @@ def whisper_options() -> dict:
             "speech_pad_ms": 200,
         },
     }
+    if WHISPER_PATIENCE and WHISPER_PATIENCE != 1:
+        opts["patience"] = float(WHISPER_PATIENCE)
+    return opts
 
 
 # ─────────────────────────────────────────────────────────

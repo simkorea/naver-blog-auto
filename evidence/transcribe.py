@@ -14,6 +14,12 @@
     python evidence/transcribe.py --text     텍스트 자료만 (빠름)
     python evidence/transcribe.py --index    의미 검색 색인만 만들기
     python evidence/transcribe.py --voiceprint  목소리로 화자 묶기
+    python evidence/transcribe.py --redo     설정을 바꾼 뒤 **전부 다시** 전사
+
+정확도를 올리고 싶을 때
+  먼저 `python evidence/tune.py` 로 녹음 하나를 여러 설정으로 견줘 보고,
+  나은 설정을 `.env` 에 적은 뒤 `--redo` 로 전체를 다시 돌린다.
+  짐작으로 밤새 다시 돌리면, 더 나빠져도 알 방법이 없다.
 
 의미 검색 색인이 왜 따로 있나
   검색창의 "의미 검색 함께"는 색인이 있어야 돈다. 색인이 없으면 체크가
@@ -131,6 +137,11 @@ def show_index_state(conn) -> None:
         print("      만들려면:  python evidence/transcribe.py --index")
 
 
+def _case_terms():
+    from evidence.ingest import audio
+    return audio.case_terms()
+
+
 def build_voiceprints(conn) -> dict:
     """
     목소리 지문을 만들고 파일을 가로질러 같은 사람끼리 묶는다.
@@ -194,6 +205,8 @@ def main() -> int:
                     help="전사는 하지 않고 의미 검색 색인만 만들기")
     ap.add_argument("--voiceprint", action="store_true",
                     help="목소리 지문으로 파일을 가로질러 화자 묶기")
+    ap.add_argument("--redo", action="store_true",
+                    help="이미 끝난 것도 포함해 전부 다시 전사 (설정을 바꾼 뒤)")
     ap.add_argument("--no-cross", action="store_true",
                     help="이중 모델 교차 검증 끄기 (약 2배 빠름)")
     ap.add_argument("--no-diarize", action="store_true", help="화자 분리 끄기")
@@ -264,15 +277,28 @@ def main() -> int:
         return 0
 
     kinds = pipeline.TEXT_KINDS if args.text else (config.KIND_AUDIO,)
-    rows = pipeline.pending(conn, kinds=kinds)
+    rows = pipeline.pending(conn, kinds=kinds, redo=args.redo)
     if not rows:
         print("  처리할 것이 없습니다.\n")
         return 0
 
-    skipping = pipeline.already_done(conn, kinds)
-    if skipping:
-        print(f"  이미 끝난 {skipping}건은 건너뜁니다. "
-              f"남은 {len(rows)}건을 처리합니다.\n")
+    if args.redo:
+        # 지금 무슨 설정으로 다시 하는지 보여준다. 무엇이 달라졌는지
+        # 모른 채 밤새 돌리면, 나빠져도 알 방법이 없다.
+        print(f"  {M['no']} 다시 전사 — 이미 끝난 것도 포함해 "
+              f"**{len(rows)}건 전부** 다시 합니다.")
+        print(f"      1차 모델    {config.WHISPER_PRIMARY}")
+        print(f"      beam        {config.WHISPER_BEAM}"
+              f"   patience {config.WHISPER_PATIENCE}")
+        print(f"      전처리      {config.PREPROCESS_LEVEL}")
+        print(f"      고유명사    {len(_case_terms())}개")
+        print("      기존 전사 결과는 파일마다 새 것으로 바뀝니다.")
+        print("      먼저 백업하시려면:  python -m evidence.backup --create\n")
+    else:
+        skipping = pipeline.already_done(conn, kinds)
+        if skipping:
+            print(f"  이미 끝난 {skipping}건은 건너뜁니다. "
+                  f"남은 {len(rows)}건을 처리합니다.\n")
 
     # Ctrl+C 를 눌러도 지금 파일까지는 마친다.
     # 중간에 끊으면 그 파일을 처음부터 다시 해야 하기 때문이다.
@@ -324,8 +350,8 @@ def main() -> int:
         kwargs["diarize"] = False
 
     try:
-        result = pipeline.run(conn, kinds=kinds, progress=on_progress,
-                              file_progress=on_file,
+        result = pipeline.run(conn, kinds=kinds, redo=args.redo,
+                              progress=on_progress, file_progress=on_file,
                               stop=lambda: asked_stop["v"], **kwargs)
     except KeyboardInterrupt:
         print("\n  멈췄습니다. 다시 실행하면 남은 것부터 이어서 합니다.\n")
