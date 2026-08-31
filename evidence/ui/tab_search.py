@@ -45,6 +45,20 @@ def render(conn):
                 "전사에는 말의 내용만 남고 감정은 글자로 남지 않습니다."
             ),
         )
+        # 여러 단어를 어떻게 볼 것인지. 숨겨두면 사용자는 알 수 없다 —
+        # 실제로 관련된 말을 열두 개 늘어놓고 "이 중 아무거나"를 기대했는데
+        # 프로그램은 "전부 다 든 구간"을 찾아 0건이 나왔다.
+        match_mode = st.radio(
+            "단어를 여러 개 넣으면",
+            ["모두 든 구간만", "하나라도 든 구간 전부"],
+            index=1, horizontal=True,
+            help=(
+                "**모두 든 구간만** — 정확히 좁힐 때. `대출 안 된다` 처럼.\n\n"
+                "**하나라도 든 구간 전부** — 넓게 훑을 때. "
+                "`환불 전매 도와줘 살려줘` 처럼 비슷한 말을 늘어놓고 "
+                "그 중 아무거나 나온 곳을 다 보고 싶을 때."
+            ),
+        )
         c1, c2, c3, c4 = st.columns(4)
         speaker = c1.selectbox("화자", ["전체"] + hybrid.speakers(conn))
         kind = c2.selectbox(
@@ -79,6 +93,7 @@ def render(conn):
             "exclude_illegal": True,
         }
         st.session_state["use_semantic"] = use_sem
+        st.session_state["match_any"] = match_mode.startswith("하나라도")
 
     q = st.session_state.get("last_query")
     if not q:
@@ -87,18 +102,23 @@ def render(conn):
 
     hits = hybrid.search(conn, q, limit=60,
                          filters=st.session_state.get("last_filters", {}),
-                         use_semantic=st.session_state.get("use_semantic", True))
+                         use_semantic=st.session_state.get("use_semantic", True),
+                         match_any=st.session_state.get("match_any", True))
     if not hits:
         st.warning("찾은 내용이 없습니다. 다른 표현으로 검색해 보세요.")
         return
 
     st.markdown(f"**{len(hits)}건** 찾음 — `{q}`")
-    if hits and hits[0].get("search_mode") == "하나라도":
-        st.warning(
-            f"넣으신 **{hits[0].get('term_count', 0)}개 단어를 모두** 포함하는 "
-            "구간은 없어서, **하나라도** 포함하는 구간을 찾았습니다.\n\n"
-            "한 단어씩 나눠 찾으시면 훨씬 정확합니다."
-        )
+    if hits and hits[0].get("search_mode") == "하나라도" \
+            and hits[0].get("term_count", 0) > 1:
+        n = hits[0]["term_count"]
+        if st.session_state.get("match_any", True):
+            st.caption(f"{n}개 단어 중 **하나라도** 든 구간을 모았습니다.")
+        else:
+            st.warning(
+                f"넣으신 **{n}개 단어를 모두** 든 구간은 없어서, "
+                "**하나라도** 든 구간을 찾았습니다."
+            )
     for h in hits:
         _result_card(conn, h, q)
 

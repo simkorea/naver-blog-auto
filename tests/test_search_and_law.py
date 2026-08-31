@@ -212,6 +212,79 @@ def run(tmp_path) -> bool:
     c.eq(len(hybrid.search(conn, "어디에도없는말", use_semantic=False)), 0,
          "정말 없는 말은 0건 그대로다")
 
+    # ── '하나라도 든 구간'을 눈에 보이는 선택지로 ──
+    # 구제책만 두었더니, 사용자는 그런 것이 있는 줄 모르고 계속 여러 단어를
+    # 넣었다가 0건을 봤다. 화면에 선택지로 내놓아야 한다.
+    # 두 방식이 **다른 결과**를 내는 자료를 일부러 만든다.
+    # 그냥 여러 단어를 넣으면 '모두'가 0건이라 구제책이 돌아 결과가 같아진다
+    # → 그 자료로는 선택지가 진짜 도는지 알 수 없다.
+    msid = add("검색방식.m4a", "audio")
+    db.add_segments(conn, msid, [
+        {"seq": 1, "text": "대출 서류를 다시 챙겨보겠습니다", "start_sec": 1, "end_sec": 5},
+        {"seq": 2, "text": "정말 죽겠다 싶었어요", "start_sec": 10, "end_sec": 14},
+        {"seq": 3, "text": "대출 때문에 죽겠다 하셨죠", "start_sec": 20, "end_sec": 24},
+    ])
+
+    # '모두' 로도 걸리는 구간이 있으므로 구제책은 돌지 않는다.
+    # 두 방식의 결과 수가 **달라야** 선택지가 실제로 동작하는 것이다.
+    both_terms = "대출 죽겠다"
+    narrow_hits = hybrid.search(conn, both_terms, use_semantic=False,
+                                match_any=False,
+                                filters={"source_ids": [msid]})
+    wide_hits = hybrid.search(conn, both_terms, use_semantic=False,
+                              match_any=True,
+                              filters={"source_ids": [msid]})
+    c.eq(len(narrow_hits), 1, "모두 든 구간만 고르면 1건")
+    c.eq(len(wide_hits), 3, "하나라도 든 구간을 고르면 3건")
+    c.ok(len(wide_hits) > len(narrow_hits),
+         "두 방식이 실제로 다른 길을 탄다 — 선택지가 살아 있다")
+    c.ok(narrow_hits and narrow_hits[0]["search_mode"] == "모두",
+         "좁게 찾으면 '모두'라고 알려준다")
+    c.ok(wide_hits and wide_hits[0]["search_mode"] == "하나라도",
+         "넓게 찾으면 '하나라도'라고 알려준다")
+
+    # 여러 단어라 '모두'가 0건이면 구제책이 그대로 돈다 (기존 동작 유지)
+    many = "환불/전매/도와줘/죽겠다/대출"
+    all_hits = hybrid.search(conn, many, use_semantic=False, match_any=False)
+    c.ok(len(all_hits) >= 3, "모두 포함이 0건이면 구제책이 그대로 돈다",
+         f"{len(all_hits)}건")
+
+    # '모두 포함'을 골랐고 실제로 그런 구간이 있으면 그것만 나와야 한다
+    narrow = hybrid.search(conn, "대출 알아봤습니다", use_semantic=False,
+                           match_any=False)
+    c.eq(len(narrow), 1, "모두 포함을 고르면 좁게 찾는다")
+    c.ok(narrow and narrow[0]["search_mode"] == "모두",
+         "좁게 찾았을 때는 그렇게 알려준다")
+
+    # 한 단어면 두 방식이 같아야 한다
+    c.eq(len(hybrid.search(conn, "대출", use_semantic=False, match_any=True)),
+         len(hybrid.search(conn, "대출", use_semantic=False, match_any=False)),
+         "한 단어면 어느 쪽을 골라도 결과가 같다")
+
+    ui2 = (Path(__file__).resolve().parent.parent
+           / "evidence" / "ui" / "tab_search.py").read_text(encoding="utf-8")
+    c.ok("st.radio(" in ui2 and '"하나라도 든 구간 전부"' in ui2,
+         "화면에 고를 수 있는 자리가 있다")
+    c.ok("match_any=st.session_state" in ui2,
+         "고른 값이 실제로 검색에 전달된다 — 화면만 있고 안 쓰면 소용없다")
+
+    # ── 지금 도는 코드가 어느 버전인지 보이는가 ────
+    # 검색을 고쳐 올렸는데 사장님 화면은 그대로 0건이었다. 원인은 코드가
+    # 아니라 **고친 코드가 안 돌고 있던 것**이었는데, 화면 어디에도 버전이
+    # 없어서 둘 중 무엇인지 알 방법이 없었다.
+    from evidence import version as _ver
+    v = _ver.info()
+    c.ok(isinstance(v, dict) and "updated" in v and "commit" in v,
+         "코드 버전을 알아낼 수 있다")
+    c.ok(bool(_ver.label()), "화면에 넣을 한 줄이 만들어진다", _ver.label())
+
+    app_src = (Path(__file__).resolve().parent.parent
+               / "evidence" / "app.py").read_text(encoding="utf-8")
+    c.ok("version.label()" in app_src, "화면 사이드바에 코드 버전이 보인다")
+    tr_src2 = (Path(__file__).resolve().parent.parent
+               / "evidence" / "transcribe.py").read_text(encoding="utf-8")
+    c.ok("version.label()" in tr_src2, "명령창 상태에도 코드 버전이 보인다")
+
     # ── 밤샘 전사가 의미 검색 색인을 만드는가 ──────
     # 색인을 만드는 embed.build_index() 가 화면에만 있고 명령창 실행
     # (evidence/transcribe.py) 에는 빠져 있었다. 그래서 밤새 전사한 뒤

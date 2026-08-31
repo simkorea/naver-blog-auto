@@ -30,7 +30,7 @@ _console_setup()
 
 import streamlit as st
 
-from evidence import config, db
+from evidence import config, db, version
 from evidence.ui import (tab_register, tab_analyze, tab_speakers, tab_search,
                          tab_timeline, tab_legal, tab_package, tab_tools)
 
@@ -74,6 +74,10 @@ def sidebar(conn):
         # 네이버 블로그 대시보드도 Streamlit 이라 포트가 겹치면 서로를
         # 상대의 화면으로 착각한다. 실제로 그 일이 있었다.
         st.caption(f"이 화면 · {app_url()}")
+        # 지금 도는 코드가 어느 버전인지. 이것이 없어서 "고쳤는데 왜 안 되냐"를
+        # 되풀이했다 — 고친 코드가 안 돌고 있던 것이 원인이었는데 알 방법이
+        # 없었다. git pull 을 했는데도 이 값이 안 바뀌면 **화면을 껐다 켜야 한다.**
+        st.caption(f"코드 · {version.label()}")
 
         s = db.stats(conn)
         c1, c2 = st.columns(2)

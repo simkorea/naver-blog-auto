@@ -246,24 +246,37 @@ def keyword_search_any(conn, terms: list[str], limit: int = 200,
 
 
 def search(conn, query: str, limit: int = 50, filters: dict = None,
-           use_semantic: bool = True) -> list[dict]:
+           use_semantic: bool = True, match_any: bool = False) -> list[dict]:
     """
     키워드 + 의미 검색을 RRF로 합친 최종 결과.
     각 항목에는 어느 쪽에서 걸렸는지(matched_by)가 표시된다.
 
-    '모두 포함'이 0건이면 '하나라도 포함'으로 한 번 더 찾는다.
-    각 항목의 `search_mode` 가 어느 쪽으로 찾았는지 알려준다 — 화면이
-    그것을 사용자에게 말해줘야, 왜 이런 결과가 나왔는지 알 수 있다.
+    match_any=False (기본)  넣은 단어를 **모두** 포함하는 구간
+    match_any=True          **하나라도** 포함하는 구간 — 넓게 훑을 때
+
+    사용자는 `환불/전매/도와줘/살려줘/...` 처럼 관련 있는 말을 한 번에
+    늘어놓고 "이 중 아무거나 나온 데를 다 보여달라"고 생각한다. 그래서
+    이것을 화면의 선택지로 내놓았다.
+
+    '모두'로 찾아 0건이면 '하나라도'로 한 번 더 찾는다. 각 항목의
+    `search_mode` 가 어느 쪽으로 찾았는지 알려준다 — 화면이 그것을
+    말해줘야 사용자가 왜 이런 결과인지 알 수 있다.
     """
-    kw = keyword_search(conn, query, limit=limit * 4, filters=filters)
+    terms = _split_terms(query)
+
+    if match_any and len(terms) > 1:
+        kw = keyword_search_any(conn, terms, limit=limit * 4, filters=filters)
+        mode = "하나라도"
+    else:
+        kw = keyword_search(conn, query, limit=limit * 4, filters=filters)
+        mode = "모두"
+
     sem = semantic_search(conn, query, limit=limit * 4, filters=filters) \
         if use_semantic else []
 
-    terms = _split_terms(query)
-    mode = "모두"
-    if not kw and not sem and len(terms) > 1:
+    if not kw and not sem and len(terms) > 1 and mode == "모두":
         # 단어를 여럿 넣으면 그 전부가 한 구간에 있어야 한다. 실제로 사용자가
-        # 일곱 단어를 한 번에 넣어 0건이 나왔다. 그냥 0건으로 두면 왜 없는지
+        # 열두 단어를 한 번에 넣어 0건이 나왔다. 그냥 0건으로 두면 왜 없는지
         # 알 방법이 없다.
         kw = keyword_search_any(conn, terms, limit=limit * 4, filters=filters)
         mode = "하나라도"

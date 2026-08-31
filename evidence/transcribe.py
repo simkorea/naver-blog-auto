@@ -67,6 +67,9 @@ def show_status(conn, pipeline, config) -> None:
     print(M["dline"] * 68)
     print("  증거파인더 · 처리 상태")
     print(M["dline"] * 68)
+    from evidence import version
+    print(f"  코드            {version.label()}")
+    print(M["line"] * 68)
     print(f"  등록 자료      {s['sources']:,}건 (녹음 {s['audio']:,})")
     print(f"  처리 완료      {s['extracted']:,}건")
     print(f"  만들어진 구간  {s['segments']:,}개")
